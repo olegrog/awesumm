@@ -39,6 +39,7 @@ MODULE user_case
   REAL (pr) :: scanning_speed
   REAL (pr) :: initial_porosity
   REAL (pr) :: initial_enthalpy
+  REAL (pr) :: kcoef                ! half-wide of step
   REAL (pr) :: conductivity_der     ! first derivative of conductivity on temperature
   REAL (pr) :: capacity_der         ! first derivative of capacity on temperature
   REAL (pr), DIMENSION(3) :: x0     ! Initial coordinates of the center of the laser beam
@@ -498,7 +499,7 @@ CONTAINS
   call input_real ('conductivity_der', conductivity_der, 'stop')
   call input_real ('capacity_der', capacity_der, 'stop')
   call input_real_vector ('x0', x0, 3, 'stop')
-
+  call input_real ('kcoef', kcoef, 'stop')
   END SUBROUTINE user_read_input
 
 
@@ -632,28 +633,42 @@ CONTAINS
     IMPLICIT NONE
     REAL (pr), INTENT(IN) :: enthalpy(:)
     REAL (pr) :: liquid_fraction(SIZE(enthalpy))
-    liquid_fraction = (enthalpy - enthalpy_S) / (enthalpy_L - enthalpy_S)
-    liquid_fraction = MAX(0.0_pr, MIN(1.0_pr, liquid_fraction))
+    ! liquid_fraction = 0.5+1/pi * ATAN(kcoef*(enthalpy-1.2_pr))
+
+    liquid_fraction = 1.0_pr/(1.0_pr+EXP(-2.0_pr*kcoef*(enthalpy-1.2_pr)))
+
+    ! liquid_fraction = (enthalpy - enthalpy_S) / (enthalpy_L - enthalpy_S)
+    ! liquid_fraction = MAX(0.0_pr, MIN(1.0_pr, liquid_fraction))
   END FUNCTION liquid_fraction
   
   FUNCTION Dliquid_fraction (Denthalpy, enthalpy)
     IMPLICIT NONE
     REAL (pr), DIMENSION(:), INTENT(IN) :: enthalpy, Denthalpy
     REAL (pr) :: Dliquid_fraction(SIZE(enthalpy))
-    Dliquid_fraction = 0.0_pr
-    WHERE (enthalpy_S < enthalpy .AND. enthalpy < enthalpy_L)
-        Dliquid_fraction = Denthalpy / (enthalpy_L - enthalpy_S)
-    END WHERE
+    ! Dliquid_fraction = Denthalpy *kcoef/(pi*(kcoef**2*(enthalpy-1.2_pr)**2+1))
+    
+    Dliquid_fraction =  Denthalpy*kcoef*2.0_pr*EXP(-2.0_pr*kcoef*(enthalpy-1.2_pr))&
+      / ((1.0_pr+EXP(-2.0_pr*kcoef*(enthalpy-1.2_pr)))**2)
+    
+    ! Dliquid_fraction = 0.0_pr
+    ! WHERE (enthalpy_S < enthalpy .AND. enthalpy < enthalpy_L)
+    ! Dliquid_fraction = Denthalpy / (enthalpy_L - enthalpy_S)
+    ! END WHERE
   END FUNCTION Dliquid_fraction
   
   FUNCTION Dliquid_fraction_diag (enthalpy)
     IMPLICIT NONE
     REAL (pr), INTENT(IN) :: enthalpy(:)
     REAL (pr) :: Dliquid_fraction_diag(SIZE(enthalpy))
-    Dliquid_fraction_diag = 0.0_pr
-    WHERE (enthalpy_S < enthalpy .AND. enthalpy < enthalpy_L)
-        Dliquid_fraction_diag = 1.0_pr / (enthalpy_L - enthalpy_S)
-    END WHERE
+    ! Dliquid_fraction_diag = kcoef/(pi*(kcoef**2*(enthalpy-1.2_pr)**2+1))
+    
+    Dliquid_fraction_diag = kcoef*2.0_pr*EXP(-2.0_pr*kcoef*(enthalpy-1.2_pr))&
+      / ((1.0_pr+EXP(-2.0_pr*kcoef*(enthalpy-1.2_pr)))**2)
+      
+    ! Dliquid_fraction_diag = 0.0_pr
+    ! WHERE (enthalpy_S < enthalpy .AND. enthalpy < enthalpy_L)
+    ! Dliquid_fraction_diag = 1.0_pr / (enthalpy_L - enthalpy_S)
+    ! END WHERE
   END FUNCTION Dliquid_fraction_diag
   
   FUNCTION porosity (enthalpy)
