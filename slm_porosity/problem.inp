@@ -138,5 +138,5 @@ initial_porosity = 0.4
 conductivity_der = 1.329e+00
 capacity_der = 5.671e-01
 x0 = 0, 0, 0                    #  starting point of the center of the laser beam
-
+fusion_smoother = 6             #6 exp #15.54 atan
 
