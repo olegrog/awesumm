@@ -138,5 +138,4 @@ initial_porosity = 0.4
 conductivity_der = 1.329e+00
 capacity_der = 5.671e-01
 x0 = 0, 0, 0                    #  starting point of the center of the laser beam
-
-
+step_function = 1               # choose step function 0 - C0; 1 - C1 spline piecewise; 2 - exp Cinf;
