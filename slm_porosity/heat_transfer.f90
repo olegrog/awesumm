@@ -33,8 +33,6 @@ MODULE user_case
   REAL (pr) :: fusion_delta         ! = liquidus - solidus
   REAL (pr) :: fusion_heat          ! the latent heat of fusion
   REAL (pr) :: convective_transfer  ! convective heat transfer coefficient
-  REAL (pr) :: enthalpy_L           ! enthalpy at the liquidus temperature
-  REAL (pr) :: enthalpy_S           ! enthalpy at the solidus temperature
   REAL (pr) :: power                ! laser power
   REAL (pr) :: absorb               ! absorptivity
   REAL (pr) :: scanning_speed
@@ -43,7 +41,6 @@ MODULE user_case
   REAL (pr) :: smoothing_width      ! width of spline in terms of fusion_delta
   REAL (pr) :: conductivity_der     ! first derivative of conductivity on temperature
   REAL (pr) :: capacity_der         ! first derivative of capacity on temperature
-  REAL (pr) :: lf_der               ! maximum first derivative of liquid fraction on enthalpy
   REAL (pr), DIMENSION(3) :: x0     ! Initial coordinates of the center of the laser beam
 CONTAINS
 
@@ -368,10 +365,10 @@ CONTAINS
        user_Drhs(shift+1:shift+ng) = 0.0_pr
     END IF
     IF (IMEXswitch .GE. 0) THEN
-       for_du = RESHAPE((/ Denthalpy_fusion(pert_u(:,ie), u_prev(:,ie)), enthalpy_fusion(u_prev(:,ie)) /), SHAPE(for_du))
+       for_du = RESHAPE((/ enthalpy_fusion(u_prev(:,ie), .TRUE.)*pert_u(:,ie), enthalpy_fusion(u_prev(:,ie)) /), SHAPE(for_du))
        CALL c_diff_fast(for_du, du, du_dummy, j_lev, ng, meth, 10, 2*ne, 1, 2*ne)
        T = temperature(u_prev(:,ie))
-       part1 = du(2*ie,:,:) * SPREAD(first_der / capacity(T)**3 * Denthalpy_fusion(pert_u(:,ie), u_prev(:,ie)), 2, dim)
+       part1 = du(2*ie,:,:) * SPREAD(first_der / capacity(T)**3 * enthalpy_fusion(u_prev(:,ie), .TRUE.)*pert_u(:,ie), 2, dim)
        part2 = du(ie,:,:) * SPREAD(conductivity(T) / capacity(T), 2, dim)
        CALL c_diff_fast((part1 + part2) * SPREAD(porosity_term(), 2, dim), d2u, d2u_dummy, j_lev, ng, meth, 10, dim, 1, dim)
        DO i = 1, dim
@@ -388,7 +385,6 @@ CONTAINS
     !print *, 'part1', part1
     !print *, 'part2', part2
     !print *, 'pert_u(:,ie)', pert_u(1:2,ie)
-    !print *, 'Denthalpy_fusion(pert_u(:,ie), u_prev(:,ie))', Denthalpy_fusion(pert_u(:,ie), u_prev(:,ie))
     !print *, 'enthalpy_fusion(u_prev(:,ie))', enthalpy_fusion(u_prev(:,ie))
     !PRINT *, 'user_Drhs', user_Drhs
     IF (user_Drhs(1).NE.user_Drhs(1)) THEN
@@ -420,8 +416,8 @@ CONTAINS
        T = temperature(u_prev_timestep(shift+1:shift+ng))
        part1 = du * du_prev(ie,:,:) * SPREAD(first_der / capacity(T)**3, 2, dim)
        part2 = d2u * SPREAD(conductivity(T) / capacity(T), 2, dim)
-       user_Drhs_diag(shift+1:shift+ng) = SUM(part1 + part2, 2) &
-           * Denthalpy_fusion_diag(u_prev_timestep(shift+1:shift+ng)) * porosity_term()
+       user_Drhs_diag(shift+1:shift+ng) = SUM(part1 + part2, 2) * &
+          enthalpy_fusion(u_prev_timestep(shift+1:shift+ng), .TRUE.) * porosity_term()
     END IF
     !PRINT *, 'user_Drhs_diag', user_Drhs_diag
 
@@ -502,10 +498,6 @@ CONTAINS
     call input_real_vector ('x0', x0, 3, 'stop')
 
     call input_integer ('smoothing_method', smoothing_method, 'stop')
-
-    enthalpy_S = 1.0_pr - fusion_delta/2
-    enthalpy_L = 1.0_pr + fusion_delta/2 + fusion_heat
-    lf_der = 1.0_pr/(enthalpy_L - enthalpy_S)
 
   END SUBROUTINE user_read_input
 
@@ -636,116 +628,101 @@ CONTAINS
     IMPLICIT NONE
   END SUBROUTINE user_post_process
 
-  FUNCTION liquid_fraction (enthalpy)
+  FUNCTION liquid_fraction (enthalpy, is_D)
     IMPLICIT NONE
-    REAL (pr), INTENT(IN) :: enthalpy(:)
+    REAL (pr),         INTENT(IN) :: enthalpy(:)
+    LOGICAL, OPTIONAL, INTENT(IN) :: is_D
     REAL (pr) :: liquid_fraction(SIZE(enthalpy))
 
     IF (smoothing_method.EQ.0) THEN         ! C^0
-      liquid_fraction = MAX(0.0_pr, MIN(1.0_pr, (enthalpy - enthalpy_S)*lf_der))
+      liquid_fraction = lf_piecewise(enthalpy, is_D)
     ELSE IF (smoothing_method.EQ.1) THEN    ! C^1
-      liquid_fraction = spline_smooth_liq_fr(enthalpy, .FALSE.)
+      liquid_fraction = lf_cubic_splines(enthalpy, is_D)
     ELSE IF (smoothing_method.EQ.2) THEN    ! C^\infty
-      liquid_fraction = exp_smooth(enthalpy, .FALSE.)
+      liquid_fraction = lf_exponent(enthalpy, is_D)
     END IF
   END FUNCTION liquid_fraction
 
-  FUNCTION Dliquid_fraction (Denthalpy, enthalpy)
+  FUNCTION lf_piecewise (enthalpy, is_D)
     IMPLICIT NONE
-    REAL (pr), DIMENSION(:), INTENT(IN) :: enthalpy, Denthalpy
-    REAL (pr) :: Dliquid_fraction(SIZE(enthalpy))
+    REAL (pr),         INTENT(IN) :: enthalpy(:)
+    LOGICAL, OPTIONAL, INTENT(IN) :: is_D
+    REAL (pr) :: lf_piecewise(SIZE(enthalpy))
+    REAL (pr) :: enthalpy_L, enthalpy_S, lf_der
 
-    IF (smoothing_method.EQ.0) THEN         ! C^0
-      WHERE (enthalpy_S < enthalpy .AND. enthalpy < enthalpy_L)
-        Dliquid_fraction = Denthalpy*lf_der
-      ELSEWHERE
-        Dliquid_fraction = 0.0_pr
-      END WHERE
-    ELSE IF (smoothing_method.EQ.1) THEN    ! C^1
-      Dliquid_fraction = Denthalpy*spline_smooth_liq_fr(enthalpy, .TRUE.)
-    ELSE IF (smoothing_method.EQ.2) THEN    ! C^\infty
-      Dliquid_fraction = Denthalpy*exp_smooth(enthalpy, .TRUE.)
-    END IF
-  END FUNCTION Dliquid_fraction
+    enthalpy_S = 1.0_pr - fusion_delta/2                ! enthalpy at the solidus temperature
+    enthalpy_L = 1.0_pr + fusion_delta/2 + fusion_heat  ! enthalpy at the liquidus temperature
+    lf_der = 1.0_pr/(enthalpy_L - enthalpy_S)           ! first derivative of liquid fraction on enthalpy
 
-  FUNCTION Dliquid_fraction_diag (enthalpy)
-    IMPLICIT NONE
-    REAL (pr), INTENT(IN) :: enthalpy(:)
-    REAL (pr) :: Dliquid_fraction_diag(SIZE(enthalpy))
-
-    IF (smoothing_method.EQ.0) THEN         ! C^0
-      WHERE (enthalpy_S < enthalpy .AND. enthalpy < enthalpy_L)
-        Dliquid_fraction_diag = lf_der
-      ELSEWHERE
-        Dliquid_fraction_diag = 0.0_pr
-      END WHERE
-    ELSE IF (smoothing_method.EQ.1) THEN    ! C^1
-      Dliquid_fraction_diag = spline_smooth_liq_fr(enthalpy, .TRUE.)
-    ELSE IF (smoothing_method.EQ.2) THEN    ! C^\infty
-      Dliquid_fraction_diag = exp_smooth(enthalpy, .TRUE.)
-    END IF
-  END FUNCTION Dliquid_fraction_diag
-
-  ! is_D = 0 for RHS, = 1 for DRHS and DRHS_diag
-  FUNCTION exp_smooth (enthalpy, is_D)
-    IMPLICIT NONE
-    REAL (pr), DIMENSION(:), INTENT(IN) :: enthalpy
-    LOGICAL,                 INTENT(IN) :: is_D
-    REAL (pr) :: exp_smooth(SIZE(enthalpy))
-    REAL (pr) :: halfpoint, delta
-
-    halfpoint = 1.0_pr + fusion_heat/2.0_pr
-    delta = fusion_delta + fusion_heat
-    exp_smooth = EXP(-4.0_pr/delta*(enthalpy - halfpoint))
-
-    IF (.NOT.is_D) THEN
-      exp_smooth = 1.0_pr/(1.0_pr + exp_smooth)
+    IF (.NOT.PRESENT(is_D)) THEN
+      lf_piecewise = MAX(0.0_pr, MIN(1.0_pr, (enthalpy - enthalpy_S)*lf_der))
     ELSE
-      exp_smooth = 4.0_pr/delta*exp_smooth/(1.0_pr + exp_smooth)**2
+      WHERE (enthalpy_S.LT.enthalpy .AND. enthalpy.LT.enthalpy_L)
+        lf_piecewise = lf_der
+      ELSEWHERE
+        lf_piecewise = 0.0_pr
+      END WHERE
     END IF
-  END FUNCTION exp_smooth
+  END FUNCTION lf_piecewise
 
-  ! is_D = 0 for RHS, = 1 for DRHS and DRHS_diag
-  FUNCTION spline_smooth_liq_fr (enthalpy, is_D)
+  FUNCTION lf_exponent (enthalpy, is_D)
     IMPLICIT NONE
-    REAL (pr), DIMENSION(:), INTENT(IN) :: enthalpy
-    LOGICAL,                 INTENT(IN) :: is_D
-    REAL (pr) :: spline_smooth_liq_fr(SIZE(enthalpy))
-    REAL (pr), DIMENSION(4) :: coeff
-    REAL (pr) :: halfpoint, delta, enthalpy_Sm, enthalpy_Sp, enthalpy_Lm, enthalpy_Lp
+    REAL (pr),         INTENT(IN) :: enthalpy(:)
+    LOGICAL, OPTIONAL, INTENT(IN) :: is_D
+    REAL (pr) :: lf_exponent(SIZE(enthalpy))
+    REAL (pr) :: enthalpy_delta, halfpoint, lf_der
 
-    halfpoint = 1.0_pr + fusion_heat/2.0_pr
-    delta = (fusion_delta + fusion_heat)*smoothing_width
+    enthalpy_delta = fusion_delta + fusion_heat         ! change of enthalpy for fusion
+    halfpoint = 1.0_pr + enthalpy_delta/2.0_pr          ! a middle (symmetric) point of fusion in terms of enthalpy
+    lf_der = 1.0_pr/enthalpy_delta                      ! first derivative of liquid fraction on enthalpy
+
+    lf_exponent = EXP(-4*lf_der*(enthalpy - halfpoint))
+
+    IF (.NOT.PRESENT(is_D)) THEN
+      lf_exponent = 1.0_pr/(1.0_pr + lf_exponent)
+    ELSE
+      lf_exponent = 4*lf_der*lf_exponent/(1.0_pr + lf_exponent)**2
+    END IF
+  END FUNCTION lf_exponent
+
+  FUNCTION lf_cubic_splines (enthalpy, is_D)
+    IMPLICIT NONE
+    REAL (pr),         INTENT(IN) :: enthalpy(:)
+    LOGICAL, OPTIONAL, INTENT(IN) :: is_D
+    REAL (pr) :: lf_cubic_splines(SIZE(enthalpy))
+    REAL (pr), DIMENSION(4) :: coeff
+    REAL (pr) :: enthalpy_delta, halfpoint, delta, lf_der
+    REAL (pr) :: enthalpy_S, enthalpy_L, enthalpy_Sm, enthalpy_Sp, enthalpy_Lm, enthalpy_Lp
+
+    enthalpy_delta = fusion_delta + fusion_heat         ! change of enthalpy for fusion
+    halfpoint = 1.0_pr + enthalpy_delta/2.0_pr          ! a middle (symmetric) point of fusion in terms of enthalpy
+    delta = enthalpy_delta*smoothing_width              ! width of the cubic splines
+    lf_der = 1.0_pr/enthalpy_delta                      ! first derivative of liquid fraction on enthalpy
+
+    enthalpy_S = 1.0_pr - fusion_delta/2                ! enthalpy at the solidus temperature
+    enthalpy_L = 1.0_pr + fusion_delta/2 + fusion_heat  ! enthalpy at the liquidus temperature
     enthalpy_Sm = enthalpy_S - delta
     enthalpy_Sp = enthalpy_S + delta
     enthalpy_Lm = enthalpy_L - delta
     enthalpy_Lp = enthalpy_L + delta
-    coeff = Spline_cubic(enthalpy_Sm, enthalpy_Sp, 0.0_pr, delta*lf_der, 0.0_pr, lf_der)
 
-    IF (.NOT.is_D) THEN
-      WHERE (enthalpy.LE.enthalpy_Sm)
-        spline_smooth_liq_fr = 0.0_pr
-      ELSEWHERE (enthalpy.GT.enthalpy_Sm .AND. enthalpy.LE.enthalpy_Sp)
-        spline_smooth_liq_fr = coeff(2)*enthalpy**2 + coeff(3)*enthalpy + coeff(4)
-      ELSEWHERE (enthalpy.GT.enthalpy_Sp .AND. enthalpy.LE.enthalpy_Lm)
-        spline_smooth_liq_fr = (enthalpy - enthalpy_S)*lf_der
+    coeff = Spline_cubic(enthalpy_Sm, enthalpy_Sp, 0.0_pr, smoothing_width, 0.0_pr, lf_der)
+    lf_cubic_splines = lf_piecewise(enthalpy, is_D)
+
+    IF (.NOT.PRESENT(is_D)) THEN
+      WHERE (enthalpy.GT.enthalpy_Sm .AND. enthalpy.LE.enthalpy_Sp)
+        lf_cubic_splines = coeff(2)*enthalpy**2 + coeff(3)*enthalpy + coeff(4)
       ELSEWHERE (enthalpy.GT.enthalpy_Lm .AND. enthalpy.LE.enthalpy_Lp)
-        spline_smooth_liq_fr = 1.0_pr - coeff(2)*(2*halfpoint - enthalpy)**2 - coeff(3)*(2*halfpoint-enthalpy) - coeff(4)
-      ELSEWHERE (enthalpy.GT.enthalpy_Lp)
-        spline_smooth_liq_fr = 1.0_pr
+        lf_cubic_splines = 1.0_pr - coeff(2)*(2*halfpoint - enthalpy)**2 - coeff(3)*(2*halfpoint-enthalpy) - coeff(4)
       END WHERE
     ELSE
       WHERE (enthalpy.GT.enthalpy_Sm .AND. enthalpy.LE.enthalpy_Sp)
-        spline_smooth_liq_fr = coeff(2)*enthalpy*2 + coeff(3)
-      ELSEWHERE (enthalpy.GT.enthalpy_Sp .AND. enthalpy.LE.enthalpy_Lm)
-        spline_smooth_liq_fr = lf_der
+        lf_cubic_splines = coeff(2)*enthalpy*2 + coeff(3)
       ELSEWHERE (enthalpy.GT.enthalpy_Lm .AND. enthalpy.LE.enthalpy_Lp)
-        spline_smooth_liq_fr = 1.0_pr - coeff(2)*(2*halfpoint - enthalpy)*2 - coeff(3)
-      ELSEWHERE
-        spline_smooth_liq_fr = 0.0_pr
+        lf_cubic_splines = coeff(2)*(2*halfpoint - enthalpy)*2 + coeff(3)
       END WHERE
     END IF
-  END FUNCTION spline_smooth_liq_fr
+  END FUNCTION lf_cubic_splines
 
   FUNCTION porosity (enthalpy)
     IMPLICIT NONE
@@ -798,7 +775,7 @@ CONTAINS
     IMPLICIT NONE
     REAL (pr), INTENT(IN) :: enthalpy_prev(:)
     REAL (pr) :: linearized_temperature_diag(SIZE(enthalpy_prev))
-    linearized_temperature_diag = Denthalpy_fusion_diag(enthalpy_prev) / &
+    linearized_temperature_diag = enthalpy_fusion(enthalpy_prev, .TRUE.) / &
         (1.0_pr + 2*capacity_der*temperature(enthalpy_prev))
   END FUNCTION linearized_temperature_diag
 
@@ -810,26 +787,18 @@ CONTAINS
         (1.0_pr + 2*capacity_der*temperature(enthalpy_prev))
   END FUNCTION linearized_temperature_rhs
 
-  FUNCTION enthalpy_fusion (enthalpy)
+  ! is_D = 0 for RHS, = 1 for DRHS and DRHS_diag
+  FUNCTION enthalpy_fusion (enthalpy, is_D)
     IMPLICIT NONE
-    REAL (pr), INTENT(IN) :: enthalpy(:)
+    REAL (pr),         INTENT(IN) :: enthalpy(:)
+    LOGICAL, OPTIONAL, INTENT(IN) :: is_D
     REAL (pr) :: enthalpy_fusion(SIZE(enthalpy))
-    enthalpy_fusion = enthalpy - fusion_heat*liquid_fraction(enthalpy)
+    IF (.NOT.PRESENT(is_D)) THEN
+        enthalpy_fusion = enthalpy - fusion_heat*liquid_fraction(enthalpy)
+    ELSE
+        enthalpy_fusion = 1.0_pr - fusion_heat*liquid_fraction(enthalpy, .TRUE.)
+    END IF
   END FUNCTION enthalpy_fusion
-
-  FUNCTION Denthalpy_fusion (Denthalpy, enthalpy)
-    IMPLICIT NONE
-    REAL (pr), DIMENSION (:), INTENT(IN) :: Denthalpy, enthalpy
-    REAL (pr) :: Denthalpy_fusion(SIZE(enthalpy))
-    Denthalpy_fusion = Denthalpy - fusion_heat*Dliquid_fraction(Denthalpy, enthalpy)
-  END FUNCTION Denthalpy_fusion
-
-  FUNCTION Denthalpy_fusion_diag (enthalpy)
-    IMPLICIT NONE
-    REAL (pr), INTENT(IN) :: enthalpy(:)
-    REAL (pr) :: Denthalpy_fusion_diag(SIZE(enthalpy))
-    Denthalpy_fusion_diag = 1.0_pr - fusion_heat*Dliquid_fraction_diag(enthalpy)
-  END FUNCTION Denthalpy_fusion_diag
 
   SUBROUTINE my_bc (Lu, u, du, T, nloc, iloc)
     IMPLICIT NONE
