@@ -39,8 +39,10 @@ MODULE user_case
   REAL (pr) :: initial_porosity
   REAL (pr) :: initial_enthalpy
   REAL (pr) :: smoothing_width      ! width of spline in terms of fusion_delta
-  REAL (pr) :: conductivity_der     ! first derivative of conductivity on temperature
+  REAL (pr) :: conductivity_der_solid     ! first derivative of conductivity on temperature
+  REAL (pr) :: conductivity_der_liquid     ! first derivative of conductivity on temperature
   REAL (pr) :: capacity_der         ! first derivative of capacity on temperature
+  REAL (pr) :: conductivity_drop    ! conductivity in liqiud form liquid_cond = 1/conductivity_drop+solid_cond*T
   REAL (pr), DIMENSION(3) :: x0     ! Initial coordinates of the center of the laser beam
 CONTAINS
 
@@ -360,7 +362,7 @@ CONTAINS
 
     ie = n_var_enthalpy
     shift = ng*(ie-1)
-    first_der = conductivity_der - 2*capacity_der
+    first_der = conductivity_der_solid - 2*capacity_der
     IF (IMEXswitch.LE.0) THEN
        user_Drhs(shift+1:shift+ng) = 0.0_pr
     END IF
@@ -406,7 +408,7 @@ CONTAINS
 
     ie = n_var_enthalpy
     shift = ng*(ie-1)
-    first_der = conductivity_der - 2*capacity_der
+    first_der = conductivity_der_solid - 2*capacity_der
     IF (IMEXswitch.LE.0) THEN
        user_Drhs_diag(shift+1:shift+ng) = 1.0_pr
     END IF
@@ -491,10 +493,11 @@ CONTAINS
     call input_real ('scanning_speed', scanning_speed, 'stop')
     call input_real ('initial_porosity', initial_porosity, 'stop')
     call input_real ('initial_enthalpy', initial_enthalpy, 'stop')
-    call input_real ('conductivity_der', conductivity_der, 'stop')
+    call input_real ('conductivity_der_solid', conductivity_der_solid, 'stop')
     call input_real ('capacity_der', capacity_der, 'stop')
     call input_real ('smoothing_width', smoothing_width, 'stop')
-
+    call input_real ('conductivity_drop', conductivity_drop, 'stop')
+    call input_real ('conductivity_der_liquid', conductivity_der_liquid, 'stop')
     call input_real_vector ('x0', x0, 3, 'stop')
 
     call input_integer ('smoothing_method', smoothing_method, 'stop')
@@ -633,96 +636,18 @@ CONTAINS
     REAL (pr),         INTENT(IN) :: enthalpy(:)
     LOGICAL, OPTIONAL, INTENT(IN) :: is_D
     REAL (pr) :: liquid_fraction(SIZE(enthalpy))
+    REAL (pr) :: enthalpy_L, enthalpy_S
+    enthalpy_S = 1.0_pr - fusion_delta/2                ! enthalpy at the solidus temperature
+    enthalpy_L = 1.0_pr + fusion_delta/2 + fusion_heat  ! enthalpy at the liquidus temperature
 
     IF (smoothing_method.EQ.0) THEN         ! C^0
-      liquid_fraction = lf_piecewise(enthalpy, is_D)
+      liquid_fraction = piecewise_connection(enthalpy, is_D, enthalpy_S, enthalpy_L, 0.0_pr, 0.0_pr, 0.0_pr, 1.0_pr)
     ELSE IF (smoothing_method.EQ.1) THEN    ! C^1
-      liquid_fraction = lf_cubic_splines(enthalpy, is_D)
+      liquid_fraction = cubic_splines_smooth(enthalpy, is_D, enthalpy_S, enthalpy_L, 0.0_pr, 0.0_pr, 0.0_pr, 1.0_pr)
     ELSE IF (smoothing_method.EQ.2) THEN    ! C^\infty
-      liquid_fraction = lf_exponent(enthalpy, is_D)
+      liquid_fraction = exponent_smooth(enthalpy, is_D, enthalpy_S, enthalpy_L, 0.0_pr, 0.0_pr, 0.0_pr, 1.0_pr)
     END IF
   END FUNCTION liquid_fraction
-
-  FUNCTION lf_piecewise (enthalpy, is_D)
-    IMPLICIT NONE
-    REAL (pr),         INTENT(IN) :: enthalpy(:)
-    LOGICAL, OPTIONAL, INTENT(IN) :: is_D
-    REAL (pr) :: lf_piecewise(SIZE(enthalpy))
-    REAL (pr) :: enthalpy_L, enthalpy_S, lf_der
-
-    enthalpy_S = 1.0_pr - fusion_delta/2                ! enthalpy at the solidus temperature
-    enthalpy_L = 1.0_pr + fusion_delta/2 + fusion_heat  ! enthalpy at the liquidus temperature
-    lf_der = 1.0_pr/(enthalpy_L - enthalpy_S)           ! first derivative of liquid fraction on enthalpy
-
-    IF (.NOT.PRESENT(is_D)) THEN
-      lf_piecewise = MAX(0.0_pr, MIN(1.0_pr, (enthalpy - enthalpy_S)*lf_der))
-    ELSE
-      WHERE (enthalpy_S.LT.enthalpy .AND. enthalpy.LT.enthalpy_L)
-        lf_piecewise = lf_der
-      ELSEWHERE
-        lf_piecewise = 0.0_pr
-      END WHERE
-    END IF
-  END FUNCTION lf_piecewise
-
-  FUNCTION lf_exponent (enthalpy, is_D)
-    IMPLICIT NONE
-    REAL (pr),         INTENT(IN) :: enthalpy(:)
-    LOGICAL, OPTIONAL, INTENT(IN) :: is_D
-    REAL (pr) :: lf_exponent(SIZE(enthalpy))
-    REAL (pr) :: enthalpy_delta, halfpoint, lf_der
-
-    enthalpy_delta = fusion_delta + fusion_heat         ! change of enthalpy for fusion
-    halfpoint = 1.0_pr + enthalpy_delta/2.0_pr          ! a middle (symmetric) point of fusion in terms of enthalpy
-    lf_der = 1.0_pr/enthalpy_delta                      ! first derivative of liquid fraction on enthalpy
-
-    lf_exponent = EXP(-4*lf_der*(enthalpy - halfpoint))
-
-    IF (.NOT.PRESENT(is_D)) THEN
-      lf_exponent = 1.0_pr/(1.0_pr + lf_exponent)
-    ELSE
-      lf_exponent = 4*lf_der*lf_exponent/(1.0_pr + lf_exponent)**2
-    END IF
-  END FUNCTION lf_exponent
-
-  FUNCTION lf_cubic_splines (enthalpy, is_D)
-    IMPLICIT NONE
-    REAL (pr),         INTENT(IN) :: enthalpy(:)
-    LOGICAL, OPTIONAL, INTENT(IN) :: is_D
-    REAL (pr) :: lf_cubic_splines(SIZE(enthalpy))
-    REAL (pr), DIMENSION(4) :: coeff
-    REAL (pr) :: enthalpy_delta, halfpoint, delta, lf_der
-    REAL (pr) :: enthalpy_S, enthalpy_L, enthalpy_Sm, enthalpy_Sp, enthalpy_Lm, enthalpy_Lp
-
-    enthalpy_delta = fusion_delta + fusion_heat         ! change of enthalpy for fusion
-    halfpoint = 1.0_pr + enthalpy_delta/2.0_pr          ! a middle (symmetric) point of fusion in terms of enthalpy
-    delta = enthalpy_delta*smoothing_width              ! width of the cubic splines
-    lf_der = 1.0_pr/enthalpy_delta                      ! first derivative of liquid fraction on enthalpy
-
-    enthalpy_S = 1.0_pr - fusion_delta/2                ! enthalpy at the solidus temperature
-    enthalpy_L = 1.0_pr + fusion_delta/2 + fusion_heat  ! enthalpy at the liquidus temperature
-    enthalpy_Sm = enthalpy_S - delta
-    enthalpy_Sp = enthalpy_S + delta
-    enthalpy_Lm = enthalpy_L - delta
-    enthalpy_Lp = enthalpy_L + delta
-
-    coeff = Spline_cubic(enthalpy_Sm, enthalpy_Sp, 0.0_pr, smoothing_width, 0.0_pr, lf_der)
-    lf_cubic_splines = lf_piecewise(enthalpy, is_D)
-
-    IF (.NOT.PRESENT(is_D)) THEN
-      WHERE (enthalpy.GT.enthalpy_Sm .AND. enthalpy.LE.enthalpy_Sp)
-        lf_cubic_splines = coeff(2)*enthalpy**2 + coeff(3)*enthalpy + coeff(4)
-      ELSEWHERE (enthalpy.GT.enthalpy_Lm .AND. enthalpy.LE.enthalpy_Lp)
-        lf_cubic_splines = 1.0_pr - coeff(2)*(2*halfpoint - enthalpy)**2 - coeff(3)*(2*halfpoint-enthalpy) - coeff(4)
-      END WHERE
-    ELSE
-      WHERE (enthalpy.GT.enthalpy_Sm .AND. enthalpy.LE.enthalpy_Sp)
-        lf_cubic_splines = coeff(2)*enthalpy*2 + coeff(3)
-      ELSEWHERE (enthalpy.GT.enthalpy_Lm .AND. enthalpy.LE.enthalpy_Lp)
-        lf_cubic_splines = coeff(2)*(2*halfpoint - enthalpy)*2 + coeff(3)
-      END WHERE
-    END IF
-  END FUNCTION lf_cubic_splines
 
   FUNCTION porosity (enthalpy)
     IMPLICIT NONE
@@ -737,11 +662,29 @@ CONTAINS
     porosity_term = (1.0_pr - u(:,n_var_porosity)) / (1.0_pr - initial_porosity)
   END FUNCTION porosity_term
 
-  PURE FUNCTION conductivity (temperature)
+  FUNCTION conductivity (temperature)
     IMPLICIT NONE
     REAL (pr), INTENT(IN) :: temperature(:)
     REAL (pr) :: conductivity(SIZE(temperature))
-    conductivity = 1.0_pr + conductivity_der*temperature
+    REAL (pr) :: temperature_S, temperature_L
+    REAL (pr) :: enthalpy_L, enthalpy_S
+    LOGICAL :: is_D   !is_D = 0 cause there is now changes in DRHS for now
+    is_D = 0
+    enthalpy_S = 1.0_pr - fusion_delta/2                ! enthalpy at the solidus temperature
+    enthalpy_L = 1.0_pr + fusion_delta/2 + fusion_heat  ! enthalpy at the liquidus temperature
+    temperature_L = enthalpy_L - fusion_heat
+    temperature_S = enthalpy_S
+
+    IF (smoothing_method.EQ.0) THEN
+      conductivity = piecewise_connection(temperature, is_D, temperature_S, temperature_L, &
+        conductivity_der_solid, 1.0_pr, conductivity_der_liquid, 1.0_pr/conductivity_drop)
+    ELSE IF (smoothing_method.EQ.1) THEN
+      conductivity = cubic_splines_smooth(temperature, is_D, temperature_S, temperature_L, &
+        conductivity_der_solid, 1.0_pr, conductivity_der_liquid, 1.0_pr/conductivity_drop)
+    ELSE IF (smoothing_method.EQ.2) THEN
+      conductivity = exponent_smooth(temperature, is_D, temperature_S, temperature_L, &
+        conductivity_der_solid, 1.0_pr, conductivity_der_liquid, 1.0_pr/conductivity_drop)
+    END IF
   END FUNCTION conductivity
 
   PURE FUNCTION capacity (temperature)
@@ -825,5 +768,93 @@ CONTAINS
     Spline_cubic(4) = (r_p**3*(fl_p - dfl_p*l_p) + r_p*(dfr_p*l_p**3 + 3*fr_p*l_p**2) &
       - fr_p*l_p**3 - r_p**2*(3*fl_p*l_p - dfl_p*l_p**2 + dfr_p*l_p**2))/(r_p-l_p)**3
   END FUNCTION Spline_cubic
+
+    !exponential smoothness of two lines a1*x+b1 and a2*x+b2 with the drop declared by two points: left_p and right_p
+  FUNCTION exponent_smooth (field, is_D, left_p, right_p, a1, b1, a2, b2)
+    IMPLICIT NONE
+    REAL (pr),         INTENT(IN) :: field(:), left_p, right_p, a1, a2, b1, b2
+    LOGICAL, OPTIONAL, INTENT(IN) :: is_D
+    REAL (pr) :: exponent_smooth (SIZE(field))
+    REAL (pr) :: delta, halfpoint, der
+    delta = right_p - left_p                   ! change of field
+    halfpoint = (right_p + left_p)/2           ! a middle (symmetric) point of fusion in terms of enthalpy
+    der = 1.0_pr/delta                   ! first derivative of liquid fraction on enthalpy
+    exponent_smooth = EXP(-4*der*(field - halfpoint))
+    IF (.NOT.PRESENT(is_D)) THEN
+      exponent_smooth = (a1*field + b1) + ((a2 - a1)*field + (b2 - b1))*1.0_pr/(1.0_pr + exponent_smooth)
+    ELSE
+      exponent_smooth = a1 + (a2 - a1)/(1.0_pr + exponent_smooth) &
+        + ((a2 - a1)*field + (b2 - b1))*4*der*exponent_smooth/(1.0_pr + exponent_smooth)**2
+    END IF
+  END FUNCTION exponent_smooth
+
+  !piecwise connection of two lines a1*x+b1 and a2*x+b2 with the drop declared by two points: left_p and right_p
+  FUNCTION piecewise_connection (field, is_D, left_p, right_p, a1, a2, b1, b2)
+    IMPLICIT NONE
+    REAL (pr),         INTENT(IN) :: field(:), left_p, right_p, a1, a2, b1, b2
+    LOGICAL, OPTIONAL, INTENT(IN) :: is_D
+    REAL (pr) :: piecewise_connection(SIZE(field))
+    REAL (pr) :: v_left, v_right, der
+    der = 1.0_pr/(right_p - left_p)           ! first derivative of liquid fraction on enthalpy
+    v_left = a1*left_p + b1
+    v_right = a2*right_p + b2
+    IF (.NOT.PRESENT(is_D)) THEN
+      WHERE (left_p.LT.field .AND. field.LT.right_p)
+        piecewise_connection = (v_right - v_left)*der*field + (right_p*v_left - left_p*v_right)*der
+      ELSEWHERE (field.LE.left_p)
+        piecewise_connection = a1*field + b1
+      ELSEWHERE (right_p.LE.field)
+        piecewise_connection = a2*field + b2
+      END WHERE
+    ELSE
+      WHERE (left_p.LT.field .AND. field.LT.right_p)
+        piecewise_connection = (v_right - v_left)*der
+      ELSEWHERE (field.LE.left_p)
+        piecewise_connection = a1
+      ELSEWHERE (right_p.LE.field)
+        piecewise_connection = a2
+      END WHERE
+    END IF
+  END FUNCTION piecewise_connection
+
+  !spline smoothness of two lines a1*x+b1 and a2*x+b2 with the drop declared by two points: left_p and right_p
+  FUNCTION cubic_splines_smooth (field, is_D, left_p, right_p, a1, a2, b1, b2)
+    IMPLICIT NONE
+    REAL (pr),         INTENT(IN) :: field(:), left_p, right_p, a1, a2, b1, b2
+    LOGICAL, OPTIONAL, INTENT(IN) :: is_D
+    REAL (pr) :: cubic_splines_smooth(SIZE(field))
+    REAL (pr), DIMENSION(4) :: coeff_left, coeff_right
+    REAL (pr) :: der, v_left, v_right, v_drop_left, v_drop_right, smooth_delta
+    REAL (pr) :: leftm, leftp, rightm, rightp
+    smooth_delta = (right_p - left_p)*smoothing_width              ! width of the cubic splines
+    der = 1.0_pr/(right_p - left_p)                                       ! first derivative
+    leftm = left_p - smooth_delta
+    leftp = left_p + smooth_delta
+    rightm = right_p - smooth_delta
+    rightp = right_p + smooth_delta
+    v_left = a1*left_p + b1
+    v_right = a2*right_p + b2
+    v_drop_left = (v_right - v_left)*der*left_p + (right_p*v_left - left_p*v_right)*der
+    v_drop_right = (v_right - v_left)*der*right_p + (right_p*v_left - left_p*v_right)*der
+    coeff_left = Spline_cubic(leftm, leftp, a1*leftm+b1, v_drop_left, a1, (v_right - v_left)*der)
+    coeff_right = Spline_cubic(rightm, rightp, v_drop_right, a2*rightp+b2, (v_right - v_left)*der, a2)
+    cubic_splines_smooth = piecewise_connection(field, is_D, left_p, right_p, a1, a2, b1, b2)
+
+    IF (.NOT.PRESENT(is_D)) THEN
+      WHERE (field.GT.leftm .AND. field.LE.leftp)
+        cubic_splines_smooth = coeff_left(1)*field**3 + coeff_left(2)*field**2 &
+          + coeff_left(3)*field + coeff_left(4)
+      ELSEWHERE (field.GT.rightm .AND. field.LE.rightp)
+        cubic_splines_smooth = coeff_right(1)*field**3 + coeff_right(2)*field**2 &
+          + coeff_right(3)*field + coeff_right(4)
+      END WHERE
+    ELSE
+      WHERE (field.GT.leftm .AND. field.LE.leftp)
+        cubic_splines_smooth = 3*coeff_left(1)*field**2 + 2*coeff_left(2)*field + coeff_left(3)
+      ELSEWHERE (field.GT.rightm .AND. field.LE.rightp)
+        cubic_splines_smooth = 3*coeff_right(1)*field**2 + 2*coeff_right(2)*field + coeff_right(3)
+      END WHERE
+    END IF
+  END FUNCTION cubic_splines_smooth
 
 END MODULE user_case
