@@ -135,9 +135,16 @@ power = 7.278e+01               #  laser power
 absorb = 0.3                    #  absorptivity
 scanning_speed = 9.076e-01
 initial_porosity = 0.4
-initial_enthalpy = 2.0
-conductivity_der = 1.329e+00
-capacity_der = 5.671e-01
+initial_enthalpy = 0.9
+
 x0 = 0, 0, 0                    #  starting point of the center of the laser beam
 smoothing_method = 1            #  0 - piecewise C^0; 1 - cubic spline C^1; 2 - exponent C^\infty
-smoothing_width = 0.25          #  width of spline in terms of fusion_delta
+smoothing_width = 0.15          #  width of spline in terms of fusion_delta
+
+#### make solid = liquid and fuison = 0 to get back to old variant
+conductivity_der_solid = 1.329e+00
+conductivity_der_liquid = 0.829e+00   #magic number for now
+conductivity_fusion = 0.1          #  drop of conductivity in liquid form
+capacity_der_solid = 5.671e-01
+capacity_der_liquid = 9.671e-01     #also magic number
+capacity_fusion = 0.1
