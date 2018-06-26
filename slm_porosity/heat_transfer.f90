@@ -33,8 +33,9 @@ MODULE user_case
   REAL (pr) :: fusion_delta         ! = liquidus - solidus
   REAL (pr) :: fusion_heat          ! the latent heat of fusion
   REAL (pr) :: convective_transfer  ! convective heat transfer coefficient
+  REAL (pr) :: radiative_transfer   ! radiative heat transfer coefficient
   REAL (pr) :: power                ! laser power
-  REAL (pr) :: absorb               ! absorptivity
+  REAL (pr) :: absorptivity
   REAL (pr) :: scanning_speed
   REAL (pr) :: initial_porosity
   REAL (pr) :: initial_enthalpy
@@ -47,7 +48,6 @@ MODULE user_case
   REAL (pr) :: Dcapacity_liquid
   REAL (pr) :: capacity_fusion
   REAL (pr) :: emissivity
-  REAL (pr) :: Stefan_Boltzmann
 
   REAL (pr) :: enthalpy_S
   REAL (pr) :: enthalpy_L
@@ -170,7 +170,7 @@ CONTAINS
     IF (dim.EQ.2) x0(dim) = xyzlimits(1,dim)
     IF ( IC_restart_mode.EQ.0 ) THEN
        DO i = 1, nlocal
-          u(i,n_var_enthalpy) = initial_enthalpy*EXP(-SUM((x(i,:)-x0)**2))*EXP(-(x(i,dim)-x0(dim))**2*power*absorb)
+          u(i,n_var_enthalpy) = initial_enthalpy*EXP(-SUM((x(i,:)-x0)**2))*EXP(-(x(i,dim)-x0(dim))**2*power*absorptivity)
        END DO
        !WHERE (x(:,dim).NE.x0(dim))
        !   u(:,n_var_enthalpy) = 0
@@ -304,7 +304,7 @@ CONTAINS
                    END IF
                    T = temperature(u_prev_timestep)
                    DT = Dtemperature(u_prev_timestep, T)
-                   rhs(iloc(1:nloc)) = rhs(iloc(1:nloc)) * absorb * power - F_heat_flux(T(iloc(1:nloc))) + &
+                   rhs(iloc(1:nloc)) = rhs(iloc(1:nloc)) * absorptivity * power - F_heat_flux(T(iloc(1:nloc))) + &
                       F_heat_flux(T(iloc(1:nloc)), .TRUE.)*DT(iloc(1:nloc))*u_prev_timestep(iloc(1:nloc))
                 ELSE                        ! other faces
                    rhs(iloc(1:nloc)) = 0
@@ -492,7 +492,7 @@ CONTAINS
     call input_real ('fusion_heat', fusion_heat, 'stop')
     call input_real ('convective_transfer', convective_transfer, 'stop')
     call input_real ('power', power, 'stop')
-    call input_real ('absorb', absorb, 'stop')
+    call input_real ('absorptivity', absorptivity, 'stop')
     call input_real ('scanning_speed', scanning_speed, 'stop')
     call input_real ('initial_porosity', initial_porosity, 'stop')
     call input_real ('initial_enthalpy', initial_enthalpy, 'stop')
@@ -506,7 +506,7 @@ CONTAINS
     call input_real ('capacity_fusion', capacity_fusion, 'stop')
     call input_real ('eps_zero', eps_zero, 'stop')
     call input_real ('emissivity', emissivity, 'stop')
-    call input_real ('Stefan_Boltzmann', Stefan_Boltzmann, 'stop')
+    call input_real ('radiative_transfer', radiative_transfer, 'stop')
 
     call input_real_vector ('x0', x0, 3, 'stop')
 
@@ -889,9 +889,9 @@ CONTAINS
     LOGICAl, OPTIONAL, INTENT(IN) :: is_D
 
     IF (.NOT.PRESENT(is_D).OR.(.NOT.is_D)) THEN
-      F_heat_flux = convective_transfer*T + emissivity*Stefan_Boltzmann*T**(dim+1)
+      F_heat_flux = convective_transfer*T + emissivity*radiative_transfer*T**(dim+1)
     ELSE
-      F_heat_flux = convective_transfer + emissivity*Stefan_Boltzmann*T**dim*(dim+1)
+      F_heat_flux = convective_transfer + emissivity*radiative_transfer*T**dim*(dim+1)
     END IF
   END FUNCTION F_heat_flux
 

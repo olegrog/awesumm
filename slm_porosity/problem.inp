@@ -128,23 +128,32 @@ wlog = T              	#  wlog
 
 #------------- case specific parameters
 
-fusion_delta = 3.663e-02        #  = liquidus - solidus
-fusion_heat = 4.061e-01         #  latent heat of fusion
-convective_transfer = 2.434e-05 #  heat transfer coefficient
-power = 7.278e+01               #  laser power
-absorb = 0.3                    #  absorptivity
-scanning_speed = 9.076e-01
-initial_porosity = 0.4
-initial_enthalpy = 2.0
-x0 = 0, 0, 0                    #  starting point of the center of the laser beam
-smoothing_method = 1            #  0 - piecewise C^0; 1 - cubic spline C^1; 2 - exponent C^\infty
-smoothing_width = 0.25          #  width of spline in terms of fusion_delta
+# thermophysical properties
 Dconductivity_solid = 1.329e+00
 Dconductivity_liquid = 1.898e+00
 conductivity_fusion = -4.374e-01
 Dcapacity_solid = 5.671e-01
 Dcapacity_liquid = 0
 capacity_fusion = 2.025e-01
-eps_zero = 1e-12                #  approximation of zero
+fusion_delta = 3.663e-02        #  = liquidus - solidus
+fusion_heat = 4.061e-01         #  latent heat of fusion
+
+# bed parameters
+power = 7.278e+01               #  laser power
+scanning_speed = 9.076e-01
+initial_porosity = 0.4
+convective_transfer = 2.434e-05 #  convective heat transfer coefficient
+radiative_transfer = 3.510e-04  #  radiative heat transfer coefficient
+
+# macroscopic model parameters
+absorptivity = 0.3
 emissivity = 0.7
-Stefan_Boltzmann = 3.510e-04
+
+# initial conditions
+initial_enthalpy = 2.0
+x0 = 0, 0, 0                    #  starting point of the center of the laser beam
+
+# numerics-specific parameters
+smoothing_method = 1            #  0 - piecewise C^0; 1 - cubic spline C^1; 2 - exponent C^\infty
+smoothing_width = 0.25          #  width of spline in terms of fusion_delta
+eps_zero = 1e-12                #  approximation of zero
