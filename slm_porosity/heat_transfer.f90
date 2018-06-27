@@ -164,13 +164,16 @@ CONTAINS
     REAL (pr), DIMENSION (nlocal,ne_local), INTENT (INOUT) :: u
     REAL (pr)  :: scl(1:n_var),scl_fltwt
     REAL (pr), INTENT (IN) :: t_local
-    REAL (pr) :: t_zero
+    REAL (pr) :: lambda, phi(1), k_0(1)
     INTEGER :: i
 
+    phi = lf_from_temperature((/ initial_temp /))
+    k_0 = conductivity((/ initial_temp /), phi)
+    lambda = absorptivity*power / pi**(.5*(dim-1)) / initial_temp / k_0(1)
     IF (dim.EQ.2) x0(dim) = xyzlimits(2,dim)
     IF ( IC_restart_mode.EQ.0 ) THEN
        DO i = 1, nlocal
-          u(i,n_var_temp) = initial_temp*EXP(-SUM((x(i,:)-x0)**2))*EXP(-(x(i,dim)-x0(dim))**2*power*absorptivity)
+          u(i,n_var_temp) = initial_temp*EXP(-SUM((x(i,:)-x0)**2))*EXP(lambda*(x(i,dim)-x0(dim)))
        END DO
     END IF
 
