@@ -639,19 +639,11 @@ CONTAINS
     REAL (pr),                                INTENT (INOUT) :: cfl_out
     REAL (pr), DIMENSION (nwlt,n_integrated), INTENT (IN)    :: u
     INTEGER                    :: i
-    REAL (pr), DIMENSION (dim) :: cfl
     REAL (pr), DIMENSION(dim,nwlt) :: h_arr
 
     use_default = .FALSE.
     CALL get_all_local_h (h_arr)
     cfl_out = MAXVAL(dt/h_arr(1,:)*scanning_speed)
-    PRINT *, "cfl_convective", cfl_out
-    DO i = 1, nwlt
-       cfl(1:dim) = ABS (u(i,1:dim)+Umn(1:dim)) * dt/h_arr(1:dim,i)
-       cfl_out = MAX (cfl_out, MAXVAL(cfl))
-    END DO
-
-  !  cfl_out = 1.0_pr ! no CFL condition
     IF (u(1,1).NE.u(1,1)) THEN
       PRINT *, '--- INFINITE ---'
       CALL ABORT
