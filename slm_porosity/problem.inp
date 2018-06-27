@@ -25,6 +25,25 @@ IC_adapt_grid 		= T    # parameter defaulted to .TRUE. If is set to .FALSE. no g
 do_Sequential_run       = F
 #***************************************************************************************
 
+###############################################################################################################################################################
+#  P a r a l l e l     D o m a i n      D e c o m p o s i t i o n
+#
+domain_debug  = F
+domain_split  = 1, 1, 1      # Parallel domain decomposition: 1 allows subdivision in the direction (x,y,z,etc) (nonzero - allow, 0 - do not split that direction)
+
+domain_meth  = 3      # domain meth decomposition is based on . . .
+                      #       0 (default) geometric simultaneous - based on prime number
+                      #       1 geometric sequential (recursive pd N) based on N^(1/D) subdivision
+                      #       2 Zoltan library, Geometric
+                      #       3 Zoltan library, Hypergraph
+                      #       4 Zoltan library, Hilbert Space-Filling Curve
+                      #       10 tree number
+                      #       11 tree number as if the boundaries are excluded
+                      #       -1 read domain decomposition from the restart file
+                      #           (during restart or in postprocessing only)
+domain_imbalance_tol = 0.1,0.85,0.95
+###############################################################################################################################################################
+
 dimension = 2		#  dim (2,3), # of dimensions
 
 coord_min = -5.0, -5.0, 0.0            #  XMIN, YMIN, ZMIN, etc
