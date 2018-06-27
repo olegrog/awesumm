@@ -167,7 +167,7 @@ CONTAINS
     REAL (pr) :: t_zero
     INTEGER :: i
 
-    IF (dim.EQ.2) x0(dim) = xyzlimits(1,dim)
+    IF (dim.EQ.2) x0(dim) = xyzlimits(2,dim)
     IF ( IC_restart_mode.EQ.0 ) THEN
        DO i = 1, nlocal
           u(i,n_var_enthalpy) = initial_enthalpy*EXP(-SUM((x(i,:)-x0)**2))*EXP(-(x(i,dim)-x0(dim))**2*power*absorptivity)
@@ -218,11 +218,13 @@ CONTAINS
              CALL get_all_indices_by_face (face_type, jlev, nloc, iloc)
              iloc(1:nloc) = shift + iloc(1:nloc)
              IF( nloc > 0 ) THEN
-                IF( face(dim) < 0 ) THEN    ! z=0 face
-                  ! dependence on temperature should be linear; therefore, we use only u_prev_timestep here
-                  Lu(iloc(1:nloc)) = Neumann_bc(u_prev_timestep(iloc(1:nloc))) * du(ie, iloc(1:nloc), dim) + &
-                     Dirichlet_bc(u_prev_timestep(iloc(1:nloc))) * u(iloc(1:nloc))
-                ELSE                        ! other faces
+                IF( face(dim) > 0 ) THEN
+                   ! dependence on temperature should be linear; therefore, we use only u_prev_timestep here
+                   Lu(iloc(1:nloc)) = Neumann_bc(u_prev_timestep(iloc(1:nloc))) * du(ie, iloc(1:nloc), dim) + &
+                      Dirichlet_bc(u_prev_timestep(iloc(1:nloc))) * u(iloc(1:nloc))
+                ELSEIF( dim == 3.AND.face(2) < 0 ) THEN
+                   Lu(iloc(1:nloc)) = du(ie, iloc(1:nloc), 2)
+                ELSE
                    Lu(iloc(1:nloc)) = u(iloc(1:nloc))
                 END IF
              END IF
@@ -258,10 +260,12 @@ CONTAINS
              CALL get_all_indices_by_face (face_type, jlev, nloc, iloc)
              iloc(1:nloc) = shift + iloc(1:nloc)
              IF( nloc > 0 ) THEN
-                IF( face(dim) < 0 ) THEN    ! z=0 face
+                IF( face(dim) > 0 ) THEN
                    Lu_diag(iloc(1:nloc)) = Neumann_bc(u_prev_timestep(iloc(1:nloc))) * du(iloc(1:nloc), dim) + &
                       Dirichlet_bc(u_prev_timestep(iloc(1:nloc)))
-                ELSE                        ! other faces
+                ELSEIF( dim == 3.AND.face(2) < 0 ) THEN
+                   Lu_diag(iloc(1:nloc)) = du(iloc(1:nloc), 2)
+                ELSE
                    Lu_diag(iloc(1:nloc)) = 1.0_pr
                 END IF
              END IF
@@ -276,7 +280,7 @@ CONTAINS
     IMPLICIT NONE
     INTEGER , INTENT (IN) :: ne_local, nlocal, jlev
     REAL (pr), DIMENSION (nlocal*ne_local), INTENT (INOUT) :: rhs
-    REAL (pr), DIMENSION (nlocal*ne_local) :: T, DT
+    REAL (pr), DIMENSION (nlocal) :: T, DT
 
     INTEGER :: i, ie, shift, face_type, nloc, meth=1
     REAL (pr), DIMENSION (ne_local,nlocal,dim) :: du, d2u
@@ -284,6 +288,8 @@ CONTAINS
     INTEGER, DIMENSION(dim) :: face
     INTEGER, DIMENSION(nwlt) :: iloc
 
+    T = temperature(u_prev_timestep)
+    DT = Dtemperature(u_prev_timestep, T)
     DO ie = 1, ne_local
        shift = nlocal*(ie-1)
        i_p_face(0) = 1
@@ -296,17 +302,15 @@ CONTAINS
              CALL get_all_indices_by_face (face_type, jlev, nloc, iloc)
              iloc(1:nloc) = shift + iloc(1:nloc)
              IF( nloc > 0 ) THEN
-                IF( face(dim) < 0 ) THEN    ! z=0 face
+                IF( face(dim) > 0 ) THEN
+                   rhs(iloc(1:nloc)) = (x(iloc(1:nloc), 1) - scanning_speed*t - x0(1))**2
                    IF( dim == 3 ) THEN
-                      rhs(iloc(1:nloc)) = -exp(-(x(iloc(1:nloc), 1) - scanning_speed*t - x0(1))**2 - (x(iloc(1:nloc), 2) - x0(2))**2 ) / pi
-                   ELSE
-                      rhs(iloc(1:nloc)) = -exp(-(x(iloc(1:nloc), 1) - scanning_speed*t - x0(1))**2 ) / pi**.5
+                      rhs(iloc(1:nloc)) = rhs(iloc(1:nloc)) + (x(iloc(1:nloc), 2) - x0(2))**2
                    END IF
-                   T = temperature(u_prev_timestep)
-                   DT = Dtemperature(u_prev_timestep, T)
-                   rhs(iloc(1:nloc)) = rhs(iloc(1:nloc)) * absorptivity * power - F_heat_flux(T(iloc(1:nloc))) + &
+                   rhs(iloc(1:nloc)) = EXP(-rhs(iloc(1:nloc))) / pi**(.5*(dim-1))
+                   rhs(iloc(1:nloc)) = rhs(iloc(1:nloc))*absorptivity*power - F_heat_flux(T(iloc(1:nloc))) + &
                       F_heat_flux(T(iloc(1:nloc)), .TRUE.)*DT(iloc(1:nloc))*u_prev_timestep(iloc(1:nloc))
-                ELSE                        ! other faces
+                ELSE
                    rhs(iloc(1:nloc)) = 0
                 END IF
              END IF

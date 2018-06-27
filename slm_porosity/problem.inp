@@ -46,8 +46,8 @@ domain_imbalance_tol = 0.1,0.85,0.95
 
 dimension = 2		#  dim (2,3), # of dimensions
 
-coord_min = -5.0, -5.0, 0.0            #  XMIN, YMIN, ZMIN, etc
-coord_max = 25.0, 5.0, 5.0		#  XMAX, YMAX, ZMAX, etc
+coord_min = -5.0, 0.0, -5.0            #  XMIN, YMIN, ZMIN, etc
+coord_max = 25.0, 5.0, 0.0		#  XMAX, YMAX, ZMAX, etc
 
 coord_zone_min = -5e+02, -6e+02, -7e+02		# XMINzone, etc
 coord_zone_max = 5e+02, 6e+02, 7e+02		# XMAXzone, etc
@@ -65,7 +65,7 @@ J_MN = 1            	#  J_MN
 J_MX = 8              	#  J_MX
 J_FILT = 20            	#  J_FILT
 
-M_vector = 12,4,2  	#  Mx, etc
+M_vector = 12,2,2  	#  Mx, etc
 periodic = 0,0,0		#  prd(:) (0/1) 0: non-periodic; 1: periodic
 uniform = 0,0,0		#  grid(:) (0/1) 0: uniform; 1: non-uniform
 
@@ -78,7 +78,7 @@ N_update_low_order = 0  # N_update_low_order
 N_diff = 2             		#  N_diff
 
 IJ_ADJ = 1,1,1		# IJ_ADJ(-1:1) = (coarser level), (same level), (finer level)
-ADJ_type = 1,1,1	#  ADJ_type(-1:1) = (coarser level), (same level), (finer level) # (0 - less conservative, 1 - more conservative)
+ADJ_type = 0,0,0	#  ADJ_type(-1:1) = (coarser level), (same level), (finer level) # (0 - less conservative, 1 - more conservative)
 
 BNDzone = F	  	#  BNDzone
 BCtype = 0             	#  BCtype (0 - Dirichlet, 1 - Neuman, 2 - Mixed)
