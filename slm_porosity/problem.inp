@@ -93,7 +93,7 @@ IMEXtype = 9                # 1=(111)L, 2=(121)L, 3=(122)A(1.0), 4=(233)A(0.732)
 
 t_begin = 0    	#  tbeg  0.2500000e+00
 t_end = 30	#  tend  1.50000e+00
-dt = 5e-3	    #  dt
+dt = 2e-3	    #  dt
 dtmax = 1 	#  dtmax
 dtmin = 1e-7 	#  dtmin-if dt < dtmin then exection stops(likely blowing up)
 dtwrite = 1e-2	#  dtwrite 1.0000000e-02
@@ -161,8 +161,9 @@ fusion_heat = 4.061e-01         #  latent heat of fusion
 power = 7.278e+01               #  laser power
 scanning_speed = 9.076e-01
 initial_porosity = 0.4
-convective_transfer = 2.434e-05 #  convective heat transfer coefficient
-radiative_transfer = 3.510e-04  #  radiative heat transfer coefficient
+convective_transfer = 2.434e-05
+radiative_transfer = 3.510e-04
+absolute_temperature = 2.148e-01
 
 # macroscopic model parameters
 absorptivity = 0.1

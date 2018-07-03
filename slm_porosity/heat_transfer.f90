@@ -34,6 +34,7 @@ MODULE user_case
   REAL (pr) :: fusion_heat          ! the latent heat of fusion
   REAL (pr) :: convective_transfer  ! convective heat transfer coefficient
   REAL (pr) :: radiative_transfer   ! radiative heat transfer coefficient
+  REAL (pr) :: absolute_temperature
   REAL (pr) :: power                ! laser power
   REAL (pr) :: absorptivity
   REAL (pr) :: scanning_speed
@@ -527,6 +528,8 @@ CONTAINS
     call input_real ('fusion_delta', fusion_delta, 'stop')
     call input_real ('fusion_heat', fusion_heat, 'stop')
     call input_real ('convective_transfer', convective_transfer, 'stop')
+    call input_real ('radiative_transfer', radiative_transfer, 'stop')
+    call input_real ('absolute_temperature', absolute_temperature, 'stop')
     call input_real ('power', power, 'stop')
     call input_real ('absorptivity', absorptivity, 'stop')
     call input_real ('scanning_speed', scanning_speed, 'stop')
@@ -543,7 +546,6 @@ CONTAINS
     call input_real ('capacity_fusion', capacity_fusion, 'stop')
     call input_real ('eps_zero', eps_zero, 'stop')
     call input_real ('emissivity', emissivity, 'stop')
-    call input_real ('radiative_transfer', radiative_transfer, 'stop')
 
     call input_real_vector ('initial_laser_position', initial_laser_position, 3, 'stop')
 
@@ -929,9 +931,9 @@ CONTAINS
     LOGICAL, OPTIONAL, INTENT(IN) :: is_D
 
     IF (.NOT.PRESENT(is_D).OR.(.NOT.is_D)) THEN
-      F_heat_flux = convective_transfer*temperature + emissivity*radiative_transfer*temperature**(dim+1)
+      F_heat_flux = convective_transfer*temperature + emissivity*radiative_transfer*(temperature + absolute_temperature)**(dim+1)
     ELSE
-      F_heat_flux = convective_transfer + emissivity*radiative_transfer*temperature**dim*(dim+1)
+      F_heat_flux = convective_transfer + emissivity*radiative_transfer*(temperature + absolute_temperature)**dim*(dim+1)
     END IF
   END FUNCTION F_heat_flux
 
