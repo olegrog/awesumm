@@ -468,6 +468,7 @@ CONTAINS
     REAL (pr), DIMENSION (nwlt,1:n_var), INTENT (IN) :: u
     REAL (pr) :: volume                               ! volume of a melting pool
     REAL (pr), DIMENSION (1) :: width, length, depth  ! dimensions of the melting pool
+    REAL (pr), DIMENSION (1) :: max_value, min_value
     CHARACTER(LEN = 16) :: file_name
 
     file = 5
@@ -481,10 +482,16 @@ CONTAINS
       END IF
     ELSE
       volume = SUM(u(:,n_var_lfrac)*dA(:))
-      length = x(MAXLOC(u(:,n_var_lfrac)*(x(:,1) - xyzlimits(1,1))), 1) - &
-        x(MAXLOC(ABS((u(:,n_var_lfrac)*(x(:,1) - xyzlimits(2,1))))), 1)
+      CALL parallel_global_sum(REAL=volume)
+      max_value = x(MAXLOC(u(:,n_var_lfrac)*(x(:,1) - xyzlimits(1,1))), 1)
+      CALL parallel_global_sum(REALMAXVAL=max_value(1))
+      min_value = x(MAXLOC(ABS((u(:,n_var_lfrac)*(x(:,1) - xyzlimits(2,1))))), 1)
+      CALL parallel_global_sum(REALMINVAL=min_value(1))
+      length = max_value - min_value
       width = 2*x(MAXLOC((u(:,n_var_lfrac)*x(:,2))), 2)
+      CALL parallel_global_sum(REALMAXVAL=width(1))
       depth = xyzlimits(2,dim) - x(MAXLOC(ABS((u(:,n_var_lfrac)*(x(:,dim) - xyzlimits(2,dim))))), dim)
+      CALL parallel_global_sum(REALMAXVAL=depth(1))
       OPEN(file, file=file_name, status='old', position='append', action='write')
       IF (dim.EQ.3) THEN
         WRITE(file, 100) t, volume, length, width, depth
@@ -590,10 +597,9 @@ CONTAINS
     IMPLICIT NONE
     REAL (pr), INTENT(IN) :: temperature(:)
     REAL (pr) :: lf_from_temperature(SIZE(temperature))
-    REAL (pr) :: lf_der, temperature_S
+    REAL (pr) :: lf_der
 
     lf_der = 1.0_pr/(fusion_delta)
-    temperature_S = 1.0_pr - fusion_delta/2
     lf_from_temperature = 1.0_pr/(1.0_pr + EXP(-4*lf_der*(temperature - 1.0_pr)))
   END FUNCTION lf_from_temperature
   !
@@ -654,6 +660,7 @@ CONTAINS
     use_default = .FALSE.
     CALL get_all_local_h (h_arr)
     cfl_out = MAXVAL(dt/h_arr(1,:)*scanning_speed)
+    CALL parallel_global_sum(REALMAXVAL=cfl_out)
     IF (u(1,1).NE.u(1,1)) THEN
       PRINT *, '--- INFINITE ---'
       CALL ABORT
