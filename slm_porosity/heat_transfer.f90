@@ -28,32 +28,43 @@ MODULE user_case
   INTEGER n_var_enthalpy
   INTEGER n_var_lfrac
   INTEGER n_var_porosity
-  INTEGER smoothing_method
 
-  REAL (pr) :: fusion_delta         ! = liquidus - solidus
-  REAL (pr) :: fusion_heat          ! the latent heat of fusion
-  REAL (pr) :: convective_transfer  ! convective heat transfer coefficient
-  REAL (pr) :: radiative_transfer   ! radiative heat transfer coefficient
-  REAL (pr) :: absolute_temperature
-  REAL (pr) :: power                ! laser power
-  REAL (pr) :: absorptivity
-  REAL (pr) :: scanning_speed
-  REAL (pr) :: initial_porosity
-  REAL (pr) :: initial_temp
-  REAL (pr) :: smoothing_width
-  REAL (pr) :: smoothing_factor
-  REAL (pr) :: eps_zero
+  ! thermophysical properties
   REAL (pr) :: Dconductivity_solid
   REAL (pr) :: Dconductivity_liquid
   REAL (pr) :: conductivity_fusion
   REAL (pr) :: Dcapacity_solid
   REAL (pr) :: Dcapacity_liquid
   REAL (pr) :: capacity_fusion
+  REAL (pr) :: fusion_delta
+  REAL (pr) :: fusion_heat
+
+  ! bed parameters
+  REAL (pr) :: power
+  REAL (pr) :: scanning_speed
+  REAL (pr) :: initial_porosity
+  REAL (pr) :: convective_transfer
+  REAL (pr) :: radiative_transfer
+  REAL (pr) :: absolute_temperature
+
+  ! macroscopic model parameters
+  REAL (pr) :: absorptivity
   REAL (pr) :: emissivity
 
+  ! initial conditions
+  REAL (pr) :: initial_temp
+  REAL (pr), DIMENSION(3) :: initial_laser_position
+
+  ! numerics-specific parameters
+  INTEGER smoothing_method
+  REAL (pr) :: smoothing_width
+  REAL (pr) :: smoothing_factor
+  REAL (pr) :: eps_zero
+  REAL (pr) :: porosity_scale
+
+  ! derived quantities
   REAL (pr) :: enthalpy_S
   REAL (pr) :: enthalpy_L
-  REAL (pr), DIMENSION(3) :: initial_laser_position     ! Initial coordinates of the center of the laser beam
 CONTAINS
 
   !
@@ -124,6 +135,8 @@ CONTAINS
 
     ALLOCATE ( Umn(1:n_var) )
     Umn = 0.0_pr !set up here if mean quantities are not zero and used in scales or equation
+    scaleCoeff = 1.
+    scaleCoeff(n_var_porosity) = porosity_scale
 
     IF (verb_level.GT.0) THEN
        PRINT *, 'n_integrated = ',n_integrated
@@ -532,31 +545,38 @@ CONTAINS
     IMPLICIT NONE
     REAL(pr), DIMENSION(1) :: tmp
 
+    ! thermophysical properties
+    call input_real ('Dconductivity_solid', Dconductivity_solid, 'stop')
+    call input_real ('Dconductivity_liquid', Dconductivity_liquid, 'stop')
+    call input_real ('conductivity_fusion', conductivity_fusion, 'stop')
+    call input_real ('Dcapacity_solid', Dcapacity_solid, 'stop')
+    call input_real ('Dcapacity_liquid', Dcapacity_liquid, 'stop')
+    call input_real ('capacity_fusion', capacity_fusion, 'stop')
     call input_real ('fusion_delta', fusion_delta, 'stop')
     call input_real ('fusion_heat', fusion_heat, 'stop')
+
+    ! bed parameters
+    call input_real ('power', power, 'stop')
+    call input_real ('scanning_speed', scanning_speed, 'stop')
+    call input_real ('initial_porosity', initial_porosity, 'stop')
     call input_real ('convective_transfer', convective_transfer, 'stop')
     call input_real ('radiative_transfer', radiative_transfer, 'stop')
     call input_real ('absolute_temperature', absolute_temperature, 'stop')
-    call input_real ('power', power, 'stop')
-    call input_real ('absorptivity', absorptivity, 'stop')
-    call input_real ('scanning_speed', scanning_speed, 'stop')
-    call input_real ('initial_porosity', initial_porosity, 'stop')
-    call input_real ('initial_temp', initial_temp, 'stop')
-    call input_real ('smoothing_width', smoothing_width, 'stop')
-    call input_real ('smoothing_factor', smoothing_factor, 'stop')
 
-    call input_real ('Dconductivity_liquid', Dconductivity_liquid, 'stop')
-    call input_real ('Dconductivity_solid', Dconductivity_solid, 'stop')
-    call input_real ('conductivity_fusion', conductivity_fusion, 'stop')
-    call input_real ('Dcapacity_liquid', Dcapacity_liquid, 'stop')
-    call input_real ('Dcapacity_solid', Dcapacity_solid, 'stop')
-    call input_real ('capacity_fusion', capacity_fusion, 'stop')
-    call input_real ('eps_zero', eps_zero, 'stop')
+    ! macroscopic model parameters
+    call input_real ('absorptivity', absorptivity, 'stop')
     call input_real ('emissivity', emissivity, 'stop')
 
+    ! initial conditions
+    call input_real ('initial_temp', initial_temp, 'stop')
     call input_real_vector ('initial_laser_position', initial_laser_position, 3, 'stop')
 
+    ! numerics-specific parameters
     call input_integer ('smoothing_method', smoothing_method, 'stop')
+    call input_real ('smoothing_width', smoothing_width, 'stop')
+    call input_real ('smoothing_factor', smoothing_factor, 'stop')
+    call input_real ('eps_zero', eps_zero, 'stop')
+    call input_real ('porosity_scale', porosity_scale, 'stop')
 
     enthalpy_S = 0.0_pr
     enthalpy_L = 1.0_pr
@@ -565,8 +585,11 @@ CONTAINS
     enthalpy_S = tmp(1)
     tmp = enthalpy((/ 1.0_pr + fusion_delta/2 /), liquid_fraction((/ enthalpy_L /)))
     enthalpy_L = tmp(1)
-    PRINT *, 'enthalpy_S = ', enthalpy_S
-    PRINT *, 'enthalpy_L = ', enthalpy_L
+
+    IF (par_rank.EQ.0) THEN
+      PRINT *, 'enthalpy_S = ', enthalpy_S
+      PRINT *, 'enthalpy_L = ', enthalpy_L
+    END IF
   END SUBROUTINE user_read_input
 
 
