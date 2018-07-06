@@ -179,23 +179,19 @@ CONTAINS
     REAL (pr), INTENT (IN) :: t_local, scl(1:n_var), scl_fltwt
     INTEGER, INTENT (INOUT) :: iter ! iteration of call while adapting initial grid
 
-    REAL (pr), DIMENSION(dim) :: x0, coords
-    REAL (pr), DIMENSION(1) :: lambda, temp, phi, psi, k_0
-    REAL (pr) :: depth
-    INTEGER :: i
+    REAL (pr), DIMENSION(nlocal) :: sqr_r, depth, lambda, temp, phi, psi, k_0
+    REAL (pr), DIMENSION(dim) :: x0
 
     IF ( IC_restart_mode.EQ.0 ) THEN
-       x0 = laser_position(0.0_pr)
-       DO i = 1, nlocal
-          coords = x(i,:) - x0
-          depth = x0(dim) - x(i,dim)
-          temp = initial_temp*EXP(depth**2 - SUM(coords**2))
-          phi = lf_from_temperature(temp)
-          psi = porosity(phi)
-          k_0 = conductivity(temp, phi)
-          lambda = laser_heat_flux() / initial_temp / k_0 / (1 - psi)
-          u(i,n_var_temp) = initial_temp*EXP(-SUM(coords**2))*EXP(-lambda(1)*depth)
-       END DO
+       x0 = 0.0_pr + laser_position(0.0_pr)       ! ugly fortran will not work without 0.0_pr
+       sqr_r = SUM((x - TRANSPOSE(SPREAD(x0, 2, nlocal)))**2, 2)
+       depth = SPREAD(x0(dim), 1, nlocal) - x(:,dim)
+       temp = initial_temp*EXP(depth**2 - sqr_r)
+       phi = lf_from_temperature(temp)
+       psi = porosity(phi, SPREAD(initial_porosity, 1, nlocal))
+       k_0 = conductivity(temp, phi)
+       lambda = laser_heat_flux() / initial_temp / k_0 / (1.0_pr - psi)
+       u(:,n_var_temp) = initial_temp*EXP(-sqr_r)*EXP(-lambda*depth)
     END IF
 
   END SUBROUTINE user_initial_conditions
@@ -221,11 +217,13 @@ CONTAINS
 
     INTEGER :: i, ie, shift, face_type, nloc
     REAL (pr), DIMENSION (ne_local,nlocal,dim) :: du, d2u
+    REAL (pr), DIMENSION (nwlt) :: psi
     INTEGER, DIMENSION(0:dim) :: i_p_face
     INTEGER, DIMENSION(dim) :: face
     INTEGER, DIMENSION(nwlt) :: iloc
 
     CALL c_diff_fast (u, du, d2u, jlev, nlocal, meth, 10, ne_local, 1, ne_local)
+    psi = get_porosity()
 
     DO ie = 1, ne_local
        shift = nlocal*(ie-1)
@@ -241,7 +239,7 @@ CONTAINS
              IF( nloc > 0 ) THEN
                 IF( face(dim) > 0 ) THEN
                    ! dependence on temperature should be linear; therefore, we use only u_prev_timestep here
-                   Lu(iloc(1:nloc)) = Neumann_bc(u_prev_timestep(iloc(1:nloc))) * du(ie, iloc(1:nloc), dim) + &
+                   Lu(iloc(1:nloc)) = Neumann_bc(u_prev_timestep(iloc(1:nloc)), psi(iloc(1:nloc) - shift)) * du(ie, iloc(1:nloc), dim) + &
                       Dirichlet_bc(u_prev_timestep(iloc(1:nloc))) * u(iloc(1:nloc))
                 ELSEIF( dim == 3.AND.face(2) < 0 ) THEN
                    Lu(iloc(1:nloc)) = du(ie, iloc(1:nloc), 2)
@@ -263,11 +261,13 @@ CONTAINS
 
     INTEGER :: i, ie, shift, face_type, nloc
     REAL (pr), DIMENSION (nlocal,dim) :: du, d2u
+    REAL (pr), DIMENSION (nwlt) :: psi
     INTEGER, DIMENSION(0:dim) :: i_p_face
     INTEGER, DIMENSION(dim) :: face
     INTEGER, DIMENSION(nwlt) :: iloc
 
     CALL c_diff_diag (du, d2u, jlev, nlocal, meth, meth, 10)
+    psi = get_porosity()
 
     DO ie = 1, ne_local
        shift = nlocal*(ie-1)
@@ -282,7 +282,7 @@ CONTAINS
              iloc(1:nloc) = shift + iloc(1:nloc)
              IF( nloc > 0 ) THEN
                 IF( face(dim) > 0 ) THEN
-                   Lu_diag(iloc(1:nloc)) = Neumann_bc(u_prev_timestep(iloc(1:nloc))) * du(iloc(1:nloc), dim) + &
+                   Lu_diag(iloc(1:nloc)) = Neumann_bc(u_prev_timestep(iloc(1:nloc)), psi(iloc(1:nloc) - shift)) * du(iloc(1:nloc), dim) + &
                       Dirichlet_bc(u_prev_timestep(iloc(1:nloc)))
                 ELSEIF( dim == 3.AND.face(2) < 0 ) THEN
                    Lu_diag(iloc(1:nloc)) = du(iloc(1:nloc), 2)
@@ -612,7 +612,7 @@ CONTAINS
     END IF
     u(:,n_var_temp) = temperature(u(:,n_var_enthalpy))
     u(:,n_var_lfrac) = liquid_fraction(u(:,n_var_enthalpy))
-    u(:,n_var_porosity) = porosity(u(:,n_var_lfrac))
+    u(:,n_var_porosity) = porosity(u(:,n_var_lfrac), u(:,n_var_porosity))
     u(:,n_var_pressure) = 0.0_pr
   END SUBROUTINE user_additional_vars
 
@@ -813,12 +813,18 @@ CONTAINS
     END IF
   END FUNCTION lf_cubic_splines
 
-  FUNCTION porosity (liquid_fraction)
+  FUNCTION porosity (liquid_fraction, previous)
     IMPLICIT NONE
-    REAL (pr), INTENT(IN) :: liquid_fraction(:)
+    REAL (pr), INTENT(IN) :: liquid_fraction(:), previous(:)
     REAL (pr) :: porosity(SIZE(liquid_fraction))
-    porosity = MAX(0.0_pr, MIN(u(:,n_var_porosity), initial_porosity*(1.0_pr - liquid_fraction)))
+    porosity = MAX(0.0_pr, MIN(previous, initial_porosity*(1.0_pr - liquid_fraction)))
   END FUNCTION porosity
+
+  FUNCTION get_porosity ()
+    IMPLICIT NONE
+    REAL (pr) :: get_porosity(nwlt)
+    get_porosity = u(:,n_var_porosity)
+  END FUNCTION get_porosity
 
   FUNCTION porosity_term ()
     IMPLICIT NONE
@@ -916,15 +922,15 @@ CONTAINS
     END IF
   END FUNCTION enthalpy_fusion
 
-  FUNCTION Neumann_bc (enthalpy)
+  FUNCTION Neumann_bc (enthalpy, porosity)
     IMPLICIT NONE
-    REAL (pr), INTENT(IN) :: enthalpy(:)
+    REAL (pr), INTENT(IN) :: enthalpy(:), porosity(:)
     REAL (pr) :: Neumann_bc(SIZE(enthalpy))
     REAL (pr) :: temp(SIZE(enthalpy)), phi(SIZE(enthalpy))
 
     temp = temperature(enthalpy)
     phi = liquid_fraction(enthalpy)
-    Neumann_bc = (1.0_pr - porosity(phi)) * conductivity(temp, phi) / &
+    Neumann_bc = (1.0_pr - porosity) * conductivity(temp, phi) / &
       capacity(temp, phi) * (1.0_pr - fusion_heat*liquid_fraction(enthalpy, .TRUE.))
   END FUNCTION Neumann_bc
 

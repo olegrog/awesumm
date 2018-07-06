@@ -52,11 +52,11 @@ coord_max = 25.0, 5.0, 0.0		#  XMAX, YMAX, ZMAX, etc
 coord_zone_min = -5e+02, -6e+02, -7e+02		# XMINzone, etc
 coord_zone_max = 5e+02, 6e+02, 7e+02		# XMAXzone, etc
 
-eps_init = 1.0000000e-3  	#  EPS used to adapt initial grid
-eps_run = 1.0000000e-3  	#  EPS used in run
-eps_adapt_steps =  3            # eps_adapt_steps ! how many time steps to adapt from eps_init to eps_run
+eps_init = 0.5e-3  	        #  EPS used to adapt initial grid
+eps_run = 1.0e-3  	        #  EPS used in run
+eps_adapt_steps =  3        #  eps_adapt_steps ! how many time steps to adapt from eps_init to eps_run
 
-Scale_Meth = 3             	# Scale_Meth !1- Linf, 2-L2
+Scale_Meth = 3             	#  Scale_Meth: 1 - Linf, 2 - pointwise L2, 3 - integral L2
 scl_fltwt = 0.0           	#  scl temporal filter weight, scl_new = scl_fltwt*scl_old + ( 1-scl_fltwt)*scl_new
 j_mn_init = 2             	#  J_mn_init force J_mn == J_INIT while adapting to IC
 j_lev_init = 2             	#  starts adapting IC by having all the points on this level of resolution
@@ -178,4 +178,4 @@ smoothing_method = 2            #  0 - piecewise C^0; 1 - cubic spline C^1; 2 - 
 smoothing_width = 0.25          #  width of spline in terms of fusion_delta
 smoothing_factor = 10           #  fusion_delta = fusion_delta*smoothing_factor
 eps_zero = 1e-12                #  approximation of zero
-porosity_scale = 1e+1
+porosity_scale = 10             #  scale factor for mesh adaptation
