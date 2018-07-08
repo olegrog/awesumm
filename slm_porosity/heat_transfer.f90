@@ -40,7 +40,7 @@ MODULE user_case
   REAL (pr) :: fusion_heat
 
   ! bed parameters
-  REAL (pr) :: power
+  REAL (pr) :: laser_power
   REAL (pr) :: scanning_speed
   REAL (pr) :: initial_porosity
   REAL (pr) :: convective_transfer
@@ -61,6 +61,7 @@ MODULE user_case
   REAL (pr) :: smoothing_factor
   REAL (pr) :: eps_zero
   REAL (pr) :: porosity_scale
+  REAL (pr) :: power_factor_2d
 
   ! derived quantities
   REAL (pr) :: enthalpy_S
@@ -556,7 +557,7 @@ CONTAINS
     call input_real ('fusion_heat', fusion_heat, 'stop')
 
     ! bed parameters
-    call input_real ('power', power, 'stop')
+    call input_real ('laser_power', laser_power, 'stop')
     call input_real ('scanning_speed', scanning_speed, 'stop')
     call input_real ('initial_porosity', initial_porosity, 'stop')
     call input_real ('convective_transfer', convective_transfer, 'stop')
@@ -577,6 +578,7 @@ CONTAINS
     call input_real ('smoothing_factor', smoothing_factor, 'stop')
     call input_real ('eps_zero', eps_zero, 'stop')
     call input_real ('porosity_scale', porosity_scale, 'stop')
+    call input_real ('power_factor_2d', power_factor_2d, 'stop')
 
     enthalpy_S = 0.0_pr
     enthalpy_L = 1.0_pr
@@ -986,7 +988,10 @@ CONTAINS
   FUNCTION laser_heat_flux ()
     IMPLICIT NONE
     REAL (pr) :: laser_heat_flux
-    laser_heat_flux = absorptivity*power/pi**(.5*(dim-1))
+    laser_heat_flux = absorptivity*laser_power/pi**(.5*(dim-1))
+    IF (dim.EQ.2) THEN
+      laser_heat_flux = laser_heat_flux*power_factor_2d
+    END IF
   END FUNCTION laser_heat_flux
 
   FUNCTION laser_position (time)
