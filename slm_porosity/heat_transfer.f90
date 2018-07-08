@@ -184,7 +184,7 @@ CONTAINS
     REAL (pr), DIMENSION(dim) :: x0
 
     IF ( IC_restart_mode.EQ.0 ) THEN
-       x0 = 0.0_pr + laser_position(0.0_pr)       ! ugly fortran will not work without 0.0_pr
+       x0(:) = laser_position(0.0_pr)       ! ugly fortran will not work without (:)
        sqr_r = SUM((x - TRANSPOSE(SPREAD(x0, 2, nlocal)))**2, 2)
        depth = SPREAD(x0(dim), 1, nlocal) - x(:,dim)
        temp = initial_temp*EXP(depth**2 - sqr_r)
@@ -477,45 +477,49 @@ CONTAINS
   !
   SUBROUTINE user_stats (u, j_mn, startup_flag)
     IMPLICIT NONE
-    INTEGER , INTENT (IN) :: startup_flag, j_mn
-    INTEGER :: file
-    REAL (pr), DIMENSION (nwlt,1:n_var), INTENT (IN) :: u
-    REAL (pr) :: volume                               ! volume of a melting pool
-    REAL (pr), DIMENSION (1) :: width, length, depth  ! dimensions of the melting pool
-    REAL (pr), DIMENSION (1) :: max_value, min_value
-    CHARACTER(LEN = 16) :: file_name
+    REAL (pr), INTENT(IN) :: u(nwlt,n_var)
+    INTEGER,   INTENT(IN) :: startup_flag, j_mn
+    REAL (pr) :: volume                 ! volume of the melting pool
+    REAL (pr) :: width, length, depth   ! dimensions of the melting pool
+    REAL (pr) :: phi(nwlt), h_arr(dim,nwlt), vars(2+dim)
+    REAL (pr) :: xmin, xmax, ymax, zmin, h_max
+    REAL (pr), PARAMETER :: threshold = 0.5_pr
+    CHARACTER(LEN=16), PARAMETER :: file_name = 'melting_pool.txt'
+    CHARACTER(LEN=100) :: header, columns
 
-    file = 5
-    file_name = 'melting_pool.txt'
     IF (startup_flag.EQ.0) THEN
-      OPEN(file, file=file_name, status='replace', action='write')
-      IF (dim.EQ.3) THEN
-        WRITE(file, *) '# time      volume      length      width       depth'
-      ELSE
-        WRITE(file, *) '# time      volume      length      depth'
+      IF (par_rank.EQ.0) THEN
+        header = '# time      volume      length      depth'
+        IF (dim.EQ.3) header = TRIM(header) // '       width'
+        OPEN(555, FILE=file_name, STATUS='replace', ACTION='write')
+        WRITE(555, *) TRIM(header)
+        CLOSE(555)
       END IF
     ELSE
-      volume = SUM(u(:,n_var_lfrac)*dA(:))
+      CALL get_all_local_h (h_arr)
+      h_max = MAXVAL(h_arr)
+      phi = u(:,n_var_lfrac)
+      volume = SUM(phi*dA)
       CALL parallel_global_sum(REAL=volume)
-      max_value = x(MAXLOC(u(:,n_var_lfrac)*(x(:,1) - xyzlimits(1,1))), 1)
-      CALL parallel_global_sum(REALMAXVAL=max_value(1))
-      min_value = x(MAXLOC(ABS((u(:,n_var_lfrac)*(x(:,1) - xyzlimits(2,1))))), 1)
-      CALL parallel_global_sum(REALMINVAL=min_value(1))
-      length = max_value - min_value
-      width = 2*x(MAXLOC((u(:,n_var_lfrac)*x(:,2))), 2)
-      CALL parallel_global_sum(REALMAXVAL=width(1))
-      depth = xyzlimits(2,dim) - x(MAXLOC(ABS((u(:,n_var_lfrac)*(x(:,dim) - xyzlimits(2,dim))))), dim)
-      CALL parallel_global_sum(REALMAXVAL=depth(1))
-      OPEN(file, file=file_name, status='old', position='append', action='write')
-      IF (dim.EQ.3) THEN
-        WRITE(file, 100) t, volume, length, width, depth
-    100 FORMAT(ES10.3, 2x, ES10.3, 2x, ES10.3, 2x, ES10.3, 2x, ES10.3)
-      ELSE
-        WRITE(file, 101) t, volume, length, depth
-    101 FORMAT(ES10.3, 2x, ES10.3, 2x, ES10.3, 2x, ES10.3)
+
+      xmin = domain_bound(phi, threshold, 1,   -1, h_max)
+      xmax = domain_bound(phi, threshold, 1,    1, h_max)
+      ymax = domain_bound(phi, threshold, 2,    1, h_max)
+      zmin = domain_bound(phi, threshold, dim, -1, h_max)
+
+      length = xmax - xmin
+      width = 2*ymax
+      depth = xyzlimits(2,dim) - zmin
+
+      IF (par_rank.EQ.0) THEN
+        columns = '(' // REPEAT('ES10.3, 2x', 2+dim) // ')'
+        vars = (/ t, volume, length, depth /)
+        IF (dim.EQ.3) vars(SIZE(vars)) = width
+        OPEN(555, FILE=file_name, STATUS='old', POSITION='append', ACTION='write')
+        WRITE(555, TRIM(columns)) vars
+        CLOSE(555)
       END IF
     END IF
-    CLOSE(file)
   END SUBROUTINE user_stats
 
 
@@ -676,11 +680,10 @@ CONTAINS
     USE sizes
     USE pde
     IMPLICIT NONE
-    LOGICAL , INTENT(INOUT) :: use_default
-    REAL (pr),                                INTENT (INOUT) :: cfl_out
-    REAL (pr), DIMENSION (nwlt,n_integrated), INTENT (IN)    :: u
-    INTEGER                    :: i
-    REAL (pr), DIMENSION(dim,nwlt) :: h_arr
+    LOGICAL,   INTENT(INOUT) :: use_default
+    REAL (pr), INTENT(INOUT) :: cfl_out
+    REAL (pr), INTENT(IN)    :: u(nwlt,n_integrated)
+    REAL (pr) :: h_arr(dim,nwlt)
 
     use_default = .FALSE.
     CALL get_all_local_h (h_arr)
@@ -1002,5 +1005,39 @@ CONTAINS
     laser_position(dim) = xyzlimits(2, dim)
     laser_position(1) = laser_position(1) + scanning_speed*time
   END FUNCTION laser_position
+
+  ELEMENTAL FUNCTION linear_interpolation (x, x1, x2, y1, y2)
+    IMPLICIT NONE
+    REAL (pr), INTENT(IN) :: x, x1, x2, y1, y2
+    REAL (pr) :: linear_interpolation
+    IF (ABS(x2-x1).LE.eps_zero) THEN
+      linear_interpolation = (y1 + y2)/2
+    ELSE
+      linear_interpolation = (y2 - y1)/(x2 - x1)*(x - x1) + y1
+    END IF
+  END FUNCTION linear_interpolation
+
+  FUNCTION domain_bound (field, threshold, axis, sgn, min_distance)
+    IMPLICIT NONE
+    REAL (pr), INTENT(IN) :: field(nwlt), threshold, min_distance
+    INTEGER,   INTENT(IN) :: axis, sgn
+    REAL (pr) :: domain_bound, x1, x2
+    INTEGER x1_loc(1), x2_loc(1), i
+    LOGICAL, DIMENSION(nwlt) :: domain, mask
+
+    domain = field.GE.threshold
+    x1 = MAXVAL(sgn*x(:,axis), MASK=domain)
+    x1_loc = MAXLOC(sgn*x(:,axis), MASK=domain)
+    mask = .NOT.domain.AND.sgn*x(:,axis).GT.sgn*x(x1_loc(1),axis)
+    DO i = 1,dim
+      IF (i.NE.axis) mask = mask.AND.x(:,i).EQ.x(x1_loc(1),i)
+    END DO
+    x2 = MINVAL(sgn*x(:,axis), MASK=mask)
+    x2_loc = MINLOC(sgn*x(:,axis), MASK=mask)
+    domain_bound = linear_interpolation(threshold, field(x1_loc(1)), field(x2_loc(1)), x1, x2)
+    IF (COUNT(mask).EQ.0.OR.ABS(x2-x1).GT.min_distance) domain_bound = -1.0_pr/0.0_pr
+    CALL parallel_global_sum(REALMAXVAL=domain_bound)
+    domain_bound = sgn*domain_bound
+  END FUNCTION domain_bound
 
 END MODULE user_case
