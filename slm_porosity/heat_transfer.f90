@@ -53,6 +53,7 @@ MODULE user_case
 
   ! initial conditions
   REAL (pr) :: initial_temp
+  REAL (pr) :: initial_pool_radius
   REAL (pr), DIMENSION(3) :: initial_laser_position
 
   ! numerics-specific parameters
@@ -184,17 +185,17 @@ CONTAINS
     REAL (pr), DIMENSION(dim) :: x0
 
     IF ( IC_restart_mode.EQ.0 ) THEN
-       x0(:) = laser_position(0.0_pr)       ! ugly fortran will not work without (:)
-       sqr_r = SUM((x - TRANSPOSE(SPREAD(x0, 2, nlocal)))**2, 2)
-       depth = SPREAD(x0(dim), 1, nlocal) - x(:,dim)
-       temp = initial_temp*EXP(depth**2 - sqr_r)
-       phi = lf_from_temperature(temp)
-       psi = porosity(phi, SPREAD(initial_porosity, 1, nlocal))
-       k_0 = conductivity(temp, phi)
-       lambda = laser_heat_flux() / initial_temp / k_0 / (1.0_pr - psi)
-       u(:,n_var_temp) = initial_temp*EXP(-sqr_r)*EXP(-lambda*depth)
+      x0(:) = laser_position(0.0_pr)       ! ugly fortran will not work without (:)
+      depth = SPREAD(x0(dim), 1, nlocal) - x(:,dim)
+      sqr_r = (SUM((x - TRANSPOSE(SPREAD(x0, 2, nlocal)))**2, 2) - depth**2)/initial_pool_radius**2
+      temp = initial_temp*EXP(-sqr_r)
+      phi = lf_from_temperature(temp)
+      psi = porosity(phi, SPREAD(initial_porosity, 1, nlocal))
+      k_0 = conductivity(temp, phi)
+      lambda = laser_heat_flux() / initial_temp / k_0 / (1.0_pr - psi) &
+        * EXP(-sqr_r*(1.0_pr - initial_pool_radius**-2))
+      u(:,n_var_temp) = initial_temp*EXP(-sqr_r)*EXP(-lambda*depth)
     END IF
-
   END SUBROUTINE user_initial_conditions
 
 !--********************************
@@ -574,6 +575,7 @@ CONTAINS
 
     ! initial conditions
     call input_real ('initial_temp', initial_temp, 'stop')
+    call input_real ('initial_pool_radius', initial_pool_radius, 'stop')
     call input_real_vector ('initial_laser_position', initial_laser_position, 3, 'stop')
 
     ! numerics-specific parameters

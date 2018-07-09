@@ -171,6 +171,7 @@ emissivity = 0.7
 
 # initial conditions
 initial_temp = 2.0
+initial_pool_radius = 2.0
 initial_laser_position = 0,0,0  #  starting point of the center of the laser beam
 
 # numerics-specific parameters
