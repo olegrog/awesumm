@@ -52,17 +52,17 @@ coord_max = 25.0, 5.0, 0.0		#  XMAX, YMAX, ZMAX, etc
 coord_zone_min = -5e+02, -6e+02, -7e+02		# XMINzone, etc
 coord_zone_max = 5e+02, 6e+02, 7e+02		# XMAXzone, etc
 
-eps_init = 1.0000000e-3  	#  EPS used to adapt initial grid
-eps_run = 1.0000000e-3  	#  EPS used in run
-eps_adapt_steps =  3            # eps_adapt_steps ! how many time steps to adapt from eps_init to eps_run
+eps_init = 0.5e-3  	        #  EPS used to adapt initial grid
+eps_run = 1.0e-3  	        #  EPS used in run
+eps_adapt_steps =  3        #  eps_adapt_steps ! how many time steps to adapt from eps_init to eps_run
 
-Scale_Meth = 2             	# Scale_Meth !1- Linf, 2-L2
+Scale_Meth = 3             	#  Scale_Meth: 1 - Linf, 2 - pointwise L2, 3 - integral L2
 scl_fltwt = 0.0           	#  scl temporal filter weight, scl_new = scl_fltwt*scl_old + ( 1-scl_fltwt)*scl_new
-j_mn_init = 1             	#  J_mn_init force J_mn == J_INIT while adapting to IC
+j_mn_init = 2             	#  J_mn_init force J_mn == J_INIT while adapting to IC
 j_lev_init = 2             	#  starts adapting IC by having all the points on this level of resolution
 j_IC = 20             	#  J_IC if the IC data does not have dimensions in it then mxyz(:)*2^(j_IC-1) is used
-J_MN = 1            	#  J_MN
-J_MX = 8              	#  J_MX
+J_MN = 2            	#  J_MN
+J_MX = 12              	#  J_MX
 J_FILT = 20            	#  J_FILT
 
 M_vector = 12,2,2  	#  Mx, etc
@@ -73,19 +73,19 @@ i_h = 123456      	#  order of boundaries (1-xmin,2-xmax,3-ymin,4-ymax,5-zmin,6-
 i_l = 111111        	#  algebraic/evolution (1/0) BC order: (lrbt)
 N_predict = 2             	#  N_predict
 N_predict_low_order = 1 # N_predict_low_order
-N_update = 2            	#  N_update
+N_update = 0            	#  N_update
 N_update_low_order = 0  # N_update_low_order
 N_diff = 2             		#  N_diff
 
 IJ_ADJ = 1,1,1		# IJ_ADJ(-1:1) = (coarser level), (same level), (finer level)
-ADJ_type = 0,0,0	#  ADJ_type(-1:1) = (coarser level), (same level), (finer level) # (0 - less conservative, 1 - more conservative)
+ADJ_type = 1,1,1	#  ADJ_type(-1:1) = (coarser level), (same level), (finer level) # (0 - less conservative, 1 - more conservative)
 
 BNDzone = F	  	#  BNDzone
 BCtype = 0             	#  BCtype (0 - Dirichlet, 1 - Neuman, 2 - Mixed)
 
 
-time_integration_method = 3 # 1=krylov, 2=Crank Nicolson, 3=RK, 4=IMEX
-RKtype = 1                  # 1=RK2, 2=RK2TVD, 3=RK3TVD, 4=RK4
+time_integration_method = 2 # 1=krylov, 2=Crank Nicolson, 3=RK, 4=IMEX
+RKtype = 4                  # 1=RK2, 2=RK2TVD, 3=RK3TVD, 4=RK4
 IMEXtype = 9                # 1=(111)L, 2=(121)L, 3=(122)A(1.0), 4=(233)A(0.732), 5=(232)L, 6=(222)L, 7=(343)L, 8=(443)L, 9=(122)A(1.0)TVD, 10=(232)A(0.5)TVD, 11=(332)LTVD
                             # (srp) => s=# of implicit steps, r=# of explicit steps, p=order of IMEX method
                             # A = A-stable method (R_inf follows in parentheses); L = L-stable method (R_inf = 0); TVD = explicit scheme is TVD
@@ -93,15 +93,15 @@ IMEXtype = 9                # 1=(111)L, 2=(121)L, 3=(122)A(1.0), 4=(233)A(0.732)
 
 t_begin = 0    	#  tbeg  0.2500000e+00
 t_end = 30	#  tend  1.50000e+00
-dt = 1e-5	    #  dt
+dt = 2e-3	    #  dt
 dtmax = 1 	#  dtmax
 dtmin = 1e-7 	#  dtmin-if dt < dtmin then exection stops(likely blowing up)
-dtwrite = 1e-4	#  dtwrite 1.0000000e-02
-t_adapt = 1e-4        # when t > t_adapt use an adaptive time step if possible
+dtwrite = 1e-2	#  dtwrite 1.0000000e-02
+t_adapt = 1e+2        # when t > t_adapt use an adaptive time step if possible
 	  		# NO time adaptation for RK and IMEX methods
 
-cflmax = .5e-00 	#  cflmax
-cflmin = 1e-08 	#  cflmin , Exit if cfl < cflmin
+cflmax = .25
+cflmin = 0 	#  cflmin , Exit if cfl < cflmin
 
 Zero_Mean = F           #  T- enforce zero mean for 1:dim first variables (velocity usually), F- do nothing
 
@@ -158,11 +158,12 @@ fusion_delta = 3.663e-02        #  = liquidus - solidus
 fusion_heat = 4.061e-01         #  latent heat of fusion
 
 # bed parameters
-power = 7.278e+01               #  laser power
+laser_power = 7.278e+01
 scanning_speed = 9.076e-01
 initial_porosity = 0.4
-convective_transfer = 2.434e-05 #  convective heat transfer coefficient
-radiative_transfer = 3.510e-04  #  radiative heat transfer coefficient
+convective_transfer = 2.434e-05
+radiative_transfer = 3.510e-04
+absolute_temperature = 2.148e-01
 
 # macroscopic model parameters
 absorptivity = 0.3
@@ -170,9 +171,13 @@ emissivity = 0.7
 
 # initial conditions
 initial_temp = 2.0
-x0 = 0, 0, 0                    #  starting point of the center of the laser beam
+initial_pool_radius = 2.0
+initial_laser_position = 0,0,0  #  starting point of the center of the laser beam
 
 # numerics-specific parameters
-smoothing_method = 1            #  0 - piecewise C^0; 1 - cubic spline C^1; 2 - exponent C^\infty
+smoothing_method = 2            #  0 - piecewise C^0; 1 - cubic spline C^1; 2 - exponent C^\infty
 smoothing_width = 0.25          #  width of spline in terms of fusion_delta
+smoothing_factor = 10           #  fusion_delta = fusion_delta*smoothing_factor
 eps_zero = 1e-12                #  approximation of zero
+porosity_scale = 10             #  scale factor for mesh adaptation
+power_factor_2d = 0.3           #  laser power factor for the 2D problem
