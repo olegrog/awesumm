@@ -12,140 +12,115 @@
 # order of lines is not important                                  #
 #------------------------------------------------------------------#
 
+dimension = 2
+
+### Start options
 file_gen = 'res.'
-#***************************************************************************************
-IC_restart_mode 	= 0    #  0: normal, 1: hard restart, 2: soft restart, 3: from IC
-IC_filename 		= 'results_old/res.0050.com.res'
-IC_restart_station 	= 1    #  it_start, restart file number to use (NOT iteration!)
-IC_file_fmt 		= 0    # IC data file format (0 - native restart file, 1-netcdf, 2- A.Wray in fourier space, 3-simple binary)
-Data_file_format 	= F    #  T = formatted, F = unformatted
-IC_adapt_grid 		= T    # parameter defaulted to .TRUE. If is set to .FALSE. no grid adaptation is done after the data are read.
-#IC_single_loop       = T
-#IC_repartition      = T
-do_Sequential_run       = F
-#***************************************************************************************
+IC_restart_mode     = 0                     # 0: normal, 1: hard restart, 2: soft restart, 3: from IC
+IC_filename         = 'ic/res.0050.com.res'
+IC_restart_station  = 1                     # restart file number to use (NOT iteration!)
+IC_file_fmt         = 0                     # IC data file format (0 - native restart file, 1-netcdf, 2- A.Wray in fourier space, 3-simple binary)
+Data_file_format    = F                     # T = formatted, F = unformatted
+IC_adapt_grid       = T                     # If is set to .FALSE. no grid adaptation is done after the data are read.
+do_Sequential_run   = F
+wlog                = T                     # Write file 'results/res._log'
+verb_level          = 1                     # Verbose level: bitwise flag to control screen output
 
-###############################################################################################################################################################
-#  P a r a l l e l     D o m a i n      D e c o m p o s i t i o n
-#
+### Wavelet thresholding filter
+eps_init        = 0.5e-3                    # EPS used to adapt initial grid
+eps_run         = 1.0e-3                    # EPS used in run
+eps_adapt_steps = 1                         # How many time steps to adapt from eps_init to eps_run
+
+### Wavelet levels
+j_mn_init  = 2                              # J_mn = J_INIT while adapting to IC
+j_lev_init = 2                              # starts adapting IC by having all the points on this level of resolution
+j_IC       = 20                             # used if the IC data does not have dimensions in it then mxyz(:)*2^(j_IC-1) is used
+J_FILT     = 20
+J_MN       = 2
+J_MX       = 12
+
+### Computational domain
+coord_min      = -5.0,    0.0,   -5.0       # XMIN, YMIN, ZMIN, etc
+coord_max      =  25.0,   5.0,    0.0       # XMAX, YMAX, ZMAX, etc
+coord_zone_min = -5e+02, -6e+02, -7e+02     # XMINzone, etc
+coord_zone_max =  5e+02,  6e+02,  7e+02     # XMAXzone, etc
+
+### Initial mesh
+uniform  =  0,  0,  0                       # Type: (0/1) 0: uniform; 1: non-uniform
+M_vector = 12,  2,  2                       # Number of mesh points
+
+### Wavelet orders
+N_predict           = 2
+N_predict_low_order = 1
+N_update            = 0
+N_update_low_order  = 0
+N_diff              = 2
+
+### Time integration
+time_integration_method = 2                 # 1=krylov, 2=Crank Nicolson, 3=RK, 4=IMEX
+RKtype                  = 4                 # 1=RK2, 2=RK2TVD, 3=RK3TVD, 4=RK4
+IMEXtype                = 9                 # 1=(111)L, 2=(121)L, 3=(122)A(1.0), 4=(233)A(0.732), 5=(232)L, 6=(222)L,
+                                            # 7=(343)L, 8=(443)L, 9=(122)A(1.0)TVD, 10=(232)A(0.5)TVD, 11=(332)LTVD
+                                            # (srp) => s=# of implicit steps, r=# of explicit steps, p=order of IMEX method
+                                            # A = A-stable method (R_inf follows in parentheses); L = L-stable method (R_inf = 0)
+t_begin = 0
+t_end   = 30
+dt      = 2e-3
+dtmax   = 1
+dtmin   = 1e-7                              # If dt < dtmin then exection stops(likely blowing up)
+dtwrite = 1e-2
+t_adapt = 1e+2                              # When t > t_adapt use an adaptive time step if possible
+                                            # NO time adaptation for RK and IMEX methods
+cflmax = 0.25
+cflmin = 0                                  # Exit if cfl < cflmin
+
+### Scaling variables
+Scale_Meth = 3                              # Method: 1 - Linf, 2 - pointwise L2, 3 - integral L2
+scl_fltwt  = 0.0                            # Filter Weight: scl_new = scl_fltwt*scl_old + (1-scl_fltwt)*scl_new
+Zero_Mean  = F                              # Never used
+
+### Adjacent zone
+IJ_ADJ   = 1, 1, 1                          # IJ_ADJ(-1:1) = (coarser level), (same level), (finer level)
+ADJ_type = 1, 1, 1                          # ADJ_type(-1:1) = (coarser level), (same level), (finer level) # (0 - less conservative, 1 - more conservative)
+
+### Boundary conditions
+periodic = 0, 0, 0                          # (0/1) 0: non-periodic; 1: periodic
+i_h      = 123456                           # order of boundaries (1-xmin,2-xmax,3-ymin,4-ymax,5-zmin,6-zmax)
+i_l      = 111111                           # algebraic/evolution (1/0) BC order: (lrbt)
+BNDzone  = F                                # BNDzone
+BCtype   = 0                                # BCtype (0 - Dirichlet, 1 - Neuman, 2 - Mixed)
+
+### Linear solvers
+GMRESflag            = T
+BiCGSTABflag         = F
+Jacoby_correction    = T
+multigrid_correction = T
+GMRES_correction     = T
+kry_p                = 2
+kry_perturb          = 2
+kry_p_coarse         = 100
+len_bicgstab         = 6
+len_bicgstab_coarse  = 100
+len_iter             = 5
+W0    = 1.0                                 # W0 underrelaxation factor for inner V-cycle
+W1    = 1.0                                 # W1 underrelaxation factor on the finest level
+W2    = 0.6666666                           # W2 underrelaxation factor for weighted Jacoby (inner points)
+W3    = 1.0                                 # W3 underrelaxation factor for weighted Jacoby (boundary points)
+W_min = 1.0e-2                              # W_min correcton factor
+W_max = 1.0                                 # W_max correction factor
+tol_gmres_stop_if_larger = F                # If true stop iterating in gmres solver if error of last iteration was smaller
+tol_gmres = 1.0e-4                          # tolerance for gmres iterative solver
+tol1      = 1.0e-6                          # tolerance for non-solenoidal half-step
+tol2      = 1.0e-6                          # tolerance for solenoidal half-step
+tol3      = 1.0e-4                          # tolerance for adaptive time step
+
+### Domain decomposition
 domain_debug  = F
-domain_split  = 1, 1, 1      # Parallel domain decomposition: 1 allows subdivision in the direction (x,y,z,etc) (nonzero - allow, 0 - do not split that direction)
+domain_split  = 1, 1, 1
+domain_meth   = 3
+domain_imbalance_tol = 0.1, 0.85, 0.95
 
-domain_meth  = 3      # domain meth decomposition is based on . . .
-                      #       0 (default) geometric simultaneous - based on prime number
-                      #       1 geometric sequential (recursive pd N) based on N^(1/D) subdivision
-                      #       2 Zoltan library, Geometric
-                      #       3 Zoltan library, Hypergraph
-                      #       4 Zoltan library, Hilbert Space-Filling Curve
-                      #       10 tree number
-                      #       11 tree number as if the boundaries are excluded
-                      #       -1 read domain decomposition from the restart file
-                      #           (during restart or in postprocessing only)
-domain_imbalance_tol = 0.1,0.85,0.95
-###############################################################################################################################################################
-
-dimension = 2		#  dim (2,3), # of dimensions
-
-coord_min = -5.0, 0.0, -5.0            #  XMIN, YMIN, ZMIN, etc
-coord_max = 25.0, 5.0, 0.0		#  XMAX, YMAX, ZMAX, etc
-
-coord_zone_min = -5e+02, -6e+02, -7e+02		# XMINzone, etc
-coord_zone_max = 5e+02, 6e+02, 7e+02		# XMAXzone, etc
-
-eps_init = 0.5e-3  	        #  EPS used to adapt initial grid
-eps_run = 1.0e-3  	        #  EPS used in run
-eps_adapt_steps =  3        #  eps_adapt_steps ! how many time steps to adapt from eps_init to eps_run
-
-Scale_Meth = 3             	#  Scale_Meth: 1 - Linf, 2 - pointwise L2, 3 - integral L2
-scl_fltwt = 0.0           	#  scl temporal filter weight, scl_new = scl_fltwt*scl_old + ( 1-scl_fltwt)*scl_new
-j_mn_init = 2             	#  J_mn_init force J_mn == J_INIT while adapting to IC
-j_lev_init = 2             	#  starts adapting IC by having all the points on this level of resolution
-j_IC = 20             	#  J_IC if the IC data does not have dimensions in it then mxyz(:)*2^(j_IC-1) is used
-J_MN = 2            	#  J_MN
-J_MX = 12              	#  J_MX
-J_FILT = 20            	#  J_FILT
-
-M_vector = 12,2,2  	#  Mx, etc
-periodic = 0,0,0		#  prd(:) (0/1) 0: non-periodic; 1: periodic
-uniform = 0,0,0		#  grid(:) (0/1) 0: uniform; 1: non-uniform
-
-i_h = 123456      	#  order of boundaries (1-xmin,2-xmax,3-ymin,4-ymax,5-zmin,6-zmax)
-i_l = 111111        	#  algebraic/evolution (1/0) BC order: (lrbt)
-N_predict = 2             	#  N_predict
-N_predict_low_order = 1 # N_predict_low_order
-N_update = 0            	#  N_update
-N_update_low_order = 0  # N_update_low_order
-N_diff = 2             		#  N_diff
-
-IJ_ADJ = 1,1,1		# IJ_ADJ(-1:1) = (coarser level), (same level), (finer level)
-ADJ_type = 1,1,1	#  ADJ_type(-1:1) = (coarser level), (same level), (finer level) # (0 - less conservative, 1 - more conservative)
-
-BNDzone = F	  	#  BNDzone
-BCtype = 0             	#  BCtype (0 - Dirichlet, 1 - Neuman, 2 - Mixed)
-
-
-time_integration_method = 2 # 1=krylov, 2=Crank Nicolson, 3=RK, 4=IMEX
-RKtype = 4                  # 1=RK2, 2=RK2TVD, 3=RK3TVD, 4=RK4
-IMEXtype = 9                # 1=(111)L, 2=(121)L, 3=(122)A(1.0), 4=(233)A(0.732), 5=(232)L, 6=(222)L, 7=(343)L, 8=(443)L, 9=(122)A(1.0)TVD, 10=(232)A(0.5)TVD, 11=(332)LTVD
-                            # (srp) => s=# of implicit steps, r=# of explicit steps, p=order of IMEX method
-                            # A = A-stable method (R_inf follows in parentheses); L = L-stable method (R_inf = 0); TVD = explicit scheme is TVD
-                            # if IMEX is used, user_rhs must be split and be defined for IMEXswitch >=0 and <=0 without using ELSE, or the results of integration will be wrong
-
-t_begin = 0    	#  tbeg  0.2500000e+00
-t_end = 30	#  tend  1.50000e+00
-dt = 2e-3	    #  dt
-dtmax = 1 	#  dtmax
-dtmin = 1e-7 	#  dtmin-if dt < dtmin then exection stops(likely blowing up)
-dtwrite = 1e-2	#  dtwrite 1.0000000e-02
-t_adapt = 1e+2        # when t > t_adapt use an adaptive time step if possible
-	  		# NO time adaptation for RK and IMEX methods
-
-cflmax = .25
-cflmin = 0 	#  cflmin , Exit if cfl < cflmin
-
-Zero_Mean = F           #  T- enforce zero mean for 1:dim first variables (velocity usually), F- do nothing
-
-diagnostics_elliptic =  F       #  diagnostics_elliptic: If T print full diagnostic for elliptic solver
-GMRESflag = T              	#  GMRESflag
-BiCGSTABflag = F              	#  BiCGSTABflag
-
-Jacoby_correction = T           # Jacoby_correction
-multigrid_correction = T        # multigrid_correction
-GMRES_correction  = T           # GMRES_correction
-
-kry_p = 2			#  kry_p
-kry_perturb = 2			#  kry_perturb
-kry_p_coarse = 100           	#  kry_p_coarse
-len_bicgstab = 6             	#  len_bicgstab
-len_bicgstab_coarse = 100	#  len_bicgstab_coarse
-len_iter = 5             	#  len_iter
-
-W0 = 1.0000000e+00 	#  W0 underrelaxation factor for inner V-cycle
-W1 = 1.0000000e+00 	#  W1 underrelaxation factor on the finest level
-W2 = 0.6666666e+00 	#  W2 underrelaxation factor for weighted Jacoby (inner points)
-W3 = 1.0000000e-00 	#  W3 underrelaxation factor for weighted Jacoby (boundary points)
-W_min = 1.00000e-02	#  W_min correcton factor
-W_max = 1.00000e-00 	#  W_max correction factor
-
-obstacle = F              	# imask !TRUE  - there is an obstacle defined
-itime = 3   	           	# itime ! 0- Euler first-order, 1- Rotational first-order, 2- Second-order, 3-Semi-implicit second-order
-obstacle_X = 0,0,0 		#  Xo(:)! Location of obstacle
-obstacle_U = 0,0,0		#  Uo(:)! Velocity of obstacle
-obstacle_move = 0,0,0		#  1- Obstacle allowed to move in that direction, else == 0
-
-
-diameter = 1.0		#  d diameter of cylinder as an obstacle
-k_star = 8.7400000e+00 	#  k_star
-m_star = 5.0000000e+00 	#  m_star
-b_star = 0.0000000e-03 	#  b_star
-tol1 = 1.0000000e-8 	#  tol1 used to set tolerence for non-solenoidal half-step
-tol2 = 1.0000000e-8 	#  tol2 used to set tolerence for solenoidal half-step
-tol3 = 1.0000000e-4           #  tol3 used to set tolerence for time step
-tol_gmres = 1.0e-4        #  used to set tolerence for gmres iterative solver
-tol_gmres_stop_if_larger = F  # If true stop iterating in gmres solver if error of last iteration was smaller
-wlog = T              	#  wlog
-
-#------------- case specific parameters
+### Case specific parameters
 
 # thermophysical properties
 Dconductivity_solid = 1.329e+00
@@ -154,8 +129,8 @@ conductivity_fusion = -4.374e-01
 Dcapacity_solid = 5.671e-01
 Dcapacity_liquid = 0
 capacity_fusion = 2.025e-01
-fusion_delta = 3.663e-02        #  = liquidus - solidus
-fusion_heat = 4.061e-01         #  latent heat of fusion
+fusion_delta = 3.663e-02                    # = liquidus - solidus
+fusion_heat = 4.061e-01                     # latent heat of fusion
 
 # bed parameters
 laser_power = 7.278e+01
@@ -172,12 +147,12 @@ emissivity = 0.7
 # initial conditions
 initial_temp = 2.0
 initial_pool_radius = 2.0
-initial_laser_position = 0,0,0  #  starting point of the center of the laser beam
+initial_laser_position = 0, 0, 0            # starting point of the center of the laser beam
 
 # numerics-specific parameters
-smoothing_method = 2            #  0 - piecewise C^0; 1 - cubic spline C^1; 2 - exponent C^\infty
-smoothing_width = 0.25          #  width of spline in terms of fusion_delta
-smoothing_factor = 10           #  fusion_delta = fusion_delta*smoothing_factor
-eps_zero = 1e-12                #  approximation of zero
-porosity_scale = 10             #  scale factor for mesh adaptation
-power_factor_2d = 0.3           #  laser power factor for the 2D problem
+smoothing_method = 2                        # 0 - piecewise C^0; 1 - cubic spline C^1; 2 - exponent C^\infty
+smoothing_width = 0.25                      # width of spline in terms of fusion_delta
+smoothing_factor = 10                       # fusion_delta = fusion_delta*smoothing_factor
+eps_zero = 1e-12                            # approximation of zero
+porosity_scale = 10                         # scale factor for mesh adaptation
+power_factor_2d = 0.3                       # laser power factor for the 2D problem
