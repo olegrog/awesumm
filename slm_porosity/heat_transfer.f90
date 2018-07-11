@@ -194,7 +194,7 @@ CONTAINS
       k_0 = conductivity(temp, phi)
       lambda = laser_heat_flux() / initial_temp / k_0 / (1.0_pr - psi) &
         * EXP(-sqr_r*(1.0_pr - initial_pool_radius**-2))
-      u(:,n_var_temp) = initial_temp*EXP(-sqr_r)*EXP(-lambda*depth)
+      u(:,n_var_temp) = initial_temp*EXP(-sqr_r)*EXP(-lambda*depth-(depth/initial_pool_radius)**2)
     END IF
   END SUBROUTINE user_initial_conditions
 
