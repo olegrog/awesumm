@@ -25,8 +25,10 @@ MODULE user_case
   !
   INTEGER n_var_pressure
   INTEGER n_var_temp
+  INTEGER n_var_dtemp
   INTEGER n_var_enthalpy
   INTEGER n_var_lfrac
+  INTEGER n_var_dlfrac
   INTEGER n_var_porosity
 
   ! thermophysical properties
@@ -105,7 +107,21 @@ CONTAINS
         exact=(/.FALSE.,.FALSE./), &
         saved=.TRUE., &
         req_restart=.FALSE.)
+    CALL register_var( 'Dtemperature', &
+        integrated=.FALSE., &
+        adapt=(/.FALSE.,.FALSE./), &
+        interpolate=(/.FALSE.,.FALSE./), &
+        exact=(/.FALSE.,.FALSE./), &
+        saved=.TRUE., &
+        req_restart=.FALSE.)
     CALL register_var( 'liquid_fraction', &
+        integrated=.FALSE., &
+        adapt=(/.FALSE.,.FALSE./), &
+        interpolate=(/.FALSE.,.FALSE./), &
+        exact=(/.FALSE.,.FALSE./), &
+        saved=.TRUE., &
+        req_restart=.FALSE.)
+    CALL register_var( 'Dliquid_fraction', &
         integrated=.FALSE., &
         adapt=(/.FALSE.,.FALSE./), &
         interpolate=(/.FALSE.,.FALSE./), &
@@ -131,8 +147,10 @@ CONTAINS
 
     n_var_pressure  = get_index('pressure ')
     n_var_temp      = get_index('temperature')
+    n_var_dtemp     = get_index('Dtemperature')
     n_var_enthalpy  = get_index('enthalpy')
     n_var_lfrac     = get_index('liquid_fraction')
+    n_var_dlfrac    = get_index('Dliquid_fraction')
     n_var_porosity  = get_index('porosity')
 
     ALLOCATE ( Umn(1:n_var) )
@@ -194,7 +212,7 @@ CONTAINS
       k_0 = conductivity(temp, phi)
       lambda = laser_heat_flux() / initial_temp / k_0 / (1.0_pr - psi) &
         * EXP(-sqr_r*(1.0_pr - initial_pool_radius**-2))
-      u(:,n_var_temp) = initial_temp*EXP(-sqr_r)*EXP(-lambda*depth)
+      u(:,n_var_temp) = initial_temp*EXP(-sqr_r)*EXP(-lambda*depth-(depth/initial_pool_radius)**2)
     END IF
   END SUBROUTINE user_initial_conditions
 
@@ -211,11 +229,11 @@ CONTAINS
   ! xO
   ! y0
   !--********************************
-  SUBROUTINE user_algebraic_BC (Lu, u, nlocal, ne_local, jlev, meth)
+  SUBROUTINE user_algebraic_BC (Lu, u_in, nlocal, ne_local, jlev, meth)
     IMPLICIT NONE
     INTEGER , INTENT (IN) :: jlev, meth, ne_local, nlocal
     REAL (pr), DIMENSION (nlocal*ne_local), INTENT (INOUT) :: Lu
-    REAL (pr), DIMENSION (nlocal*ne_local), INTENT (IN)    :: u
+    REAL (pr), DIMENSION (nlocal*ne_local), INTENT (IN)    :: u_in
 
     INTEGER :: i, ie, shift, face_type, nloc
     REAL (pr), DIMENSION (ne_local,nlocal,dim) :: du, d2u
@@ -224,8 +242,8 @@ CONTAINS
     INTEGER, DIMENSION(dim) :: face
     INTEGER, DIMENSION(nwlt) :: iloc
 
-    CALL c_diff_fast (u, du, d2u, jlev, nlocal, meth, 10, ne_local, 1, ne_local)
-    psi = get_porosity()
+    CALL c_diff_fast (u_in, du, d2u, jlev, nlocal, meth, 10, ne_local, 1, ne_local)
+    psi = u(:,n_var_porosity)
 
     DO ie = 1, ne_local
        shift = nlocal*(ie-1)
@@ -242,18 +260,16 @@ CONTAINS
                 IF( face(dim) > 0 ) THEN
                    ! dependence on temperature should be linear; therefore, we use only u_prev_timestep here
                    Lu(iloc(1:nloc)) = Neumann_bc(u_prev_timestep(iloc(1:nloc)), psi(iloc(1:nloc) - shift)) * du(ie, iloc(1:nloc), dim) + &
-                      Dirichlet_bc(u_prev_timestep(iloc(1:nloc))) * u(iloc(1:nloc))
+                      Dirichlet_bc(u_prev_timestep(iloc(1:nloc))) * u_in(iloc(1:nloc))
                 ELSEIF( dim == 3.AND.face(2) < 0 ) THEN
                    Lu(iloc(1:nloc)) = du(ie, iloc(1:nloc), 2)
                 ELSE
-                   Lu(iloc(1:nloc)) = u(iloc(1:nloc))
+                   Lu(iloc(1:nloc)) = u_in(iloc(1:nloc))
                 END IF
              END IF
           END IF
        END DO
     END DO
-    !PRINT *, 'user_algebraic_BC', Lu(shift+iloc(1:nloc))
-
   END SUBROUTINE user_algebraic_BC
 
   SUBROUTINE user_algebraic_BC_diag (Lu_diag, nlocal, ne_local, jlev, meth)
@@ -269,7 +285,7 @@ CONTAINS
     INTEGER, DIMENSION(nwlt) :: iloc
 
     CALL c_diff_diag (du, d2u, jlev, nlocal, meth, meth, 10)
-    psi = get_porosity()
+    psi = u(:,n_var_porosity)
 
     DO ie = 1, ne_local
        shift = nlocal*(ie-1)
@@ -296,7 +312,6 @@ CONTAINS
        END DO
     END DO
     !PRINT *, 'user_algebraic_BC_diag', Lu_diag(shift+iloc(1:nloc))
-
   END SUBROUTINE user_algebraic_BC_diag
 
   SUBROUTINE user_algebraic_BC_rhs (rhs, ne_local, nlocal, jlev)
@@ -311,8 +326,8 @@ CONTAINS
     INTEGER, DIMENSION(dim) :: face
     INTEGER, DIMENSION(nwlt) :: iloc
 
-    temp = temperature(u_prev_timestep)
-    Dtemp = Dtemperature(u_prev_timestep, temp)
+    temp = u(:,n_var_temp)
+    Dtemp = u(:,n_var_dtemp)
     DO ie = 1, ne_local
        shift = nlocal*(ie-1)
        i_p_face(0) = 1
@@ -328,7 +343,7 @@ CONTAINS
                 IF( face(dim) > 0 ) THEN
                    rhs(iloc(1:nloc)) = SUM((x(iloc(1:nloc),:) - TRANSPOSE(SPREAD(laser_position(t), 2, nloc)))**2, 2)
                    rhs(iloc(1:nloc)) = laser_heat_flux()*EXP(-rhs(iloc(1:nloc))) - F_heat_flux(temp(iloc(1:nloc))) + &
-                      F_heat_flux(temp(iloc(1:nloc)), .TRUE.)*Dtemp(iloc(1:nloc))*u_prev_timestep(iloc(1:nloc))
+                      F_heat_flux(temp(iloc(1:nloc)), 1)*Dtemp(iloc(1:nloc))*u_prev_timestep(iloc(1:nloc))
                 ELSE
                    rhs(iloc(1:nloc)) = 0
                 END IF
@@ -336,7 +351,6 @@ CONTAINS
           END IF
        END DO
     END DO
-
   END SUBROUTINE user_algebraic_BC_rhs
 
   SUBROUTINE user_project (u, p, nlocal, meth)
@@ -347,12 +361,12 @@ CONTAINS
     REAL (pr), DIMENSION (nlocal,n_integrated), INTENT(INOUT) :: u
   END SUBROUTINE user_project
 
-  FUNCTION user_rhs (u_integrated, p)
+  FUNCTION user_rhs (u_in, p)
     IMPLICIT NONE
-    REAL (pr), DIMENSION (ng,ne), INTENT(IN) :: u_integrated
+    REAL (pr), DIMENSION (ng,ne), INTENT(IN) :: u_in
     REAL (pr), DIMENSION (ng), INTENT(IN) :: p
     REAL (pr), DIMENSION (n) :: user_rhs
-    REAL (pr), DIMENSION (ng) :: temp, phi
+    REAL (pr), DIMENSION (ng) :: psi, temp, phi, k_0, c_p
     INTEGER :: ie, shift, i
     INTEGER, PARAMETER :: meth = 1
     REAL (pr), DIMENSION (ne,ng,dim) :: du, du_dummy
@@ -364,10 +378,14 @@ CONTAINS
        user_rhs(shift+1:shift+ng) = 0.0_pr
     END IF
     IF (IMEXswitch .GE. 0) THEN
-       CALL c_diff_fast(enthalpy_fusion(u_integrated(:,ie)), du, du_dummy, j_lev, ng, meth, 10, ne, 1, ne)
-       temp = temperature(u_integrated(:,ie))
-       phi = liquid_fraction(u_integrated(:,ie))
-       du(ie,:,:) = du(ie,:,:) * SPREAD(conductivity(temp, phi) / capacity(temp, phi) * porosity_term(), 2, dim)
+       psi = u(:,n_var_porosity)
+       temp = u(:,n_var_temp)
+       phi = u(:,n_var_lfrac)
+       k_0 = conductivity(temp, phi)
+       c_p = capacity(temp, phi)
+
+       CALL c_diff_fast(enthalpy_fusion(u_in(:,ie)), du, du_dummy, j_lev, ng, meth, 10, ne, 1, ne)
+       du(ie,:,:) = du(ie,:,:) * SPREAD(k_0 / c_p * porosity_term(psi), 2, dim)
        CALL c_diff_fast(du(ie,:,:), d2u, d2u_dummy, j_lev, ng, meth, 10, dim, 1, dim)
        DO i = 1, dim
           user_rhs(shift+1:shift+ng) = user_rhs(shift+1:shift+ng) + d2u(i,:,i)
@@ -380,7 +398,7 @@ CONTAINS
     INTEGER, INTENT(IN) :: meth
     REAL (pr), DIMENSION (ng,ne) :: pert_u, u_prev
     REAL (pr), DIMENSION (n) :: user_Drhs
-    REAL (pr), DIMENSION (ng) :: temp, phi, Dphi, Dtemp, k_0, c_p, Dk_0, Dc_p
+    REAL (pr), DIMENSION (ng) :: psi, temp, phi, Dphi, Dtemp, k_0, c_p, Dk_0, Dc_p
     INTEGER :: ie, shift, i
     REAL (pr), DIMENSION (ng,2*ne) :: for_du
     REAL (pr), DIMENSION (2*ne,ng,dim) :: du, du_dummy ! der(pert_u) in du(1:ne,:,:) and der(u) in du(ne+1:2*ne,:,:)
@@ -393,19 +411,21 @@ CONTAINS
        user_Drhs(shift+1:shift+ng) = 0.0_pr
     END IF
     IF (IMEXswitch .GE. 0) THEN
-       temp = temperature(u_prev(:,ie))
-       Dtemp = Dtemperature(u_prev(:,ie), temp)
-       phi = liquid_fraction(u_prev(:,ie))
-       Dphi = liquid_fraction(u_prev(:,ie), .TRUE.)
+       psi = u(:,n_var_porosity)
+       temp = u(:,n_var_temp)
+       Dtemp = u(:,n_var_dtemp)
+       phi = u(:,n_var_lfrac)
+       Dphi = u(:,n_var_dlfrac)
        k_0 = conductivity(temp, phi)
        c_p = capacity(temp, phi)
        Dk_0 = conductivity(temp, phi, 1)*Dphi + conductivity(temp, phi, 2)*Dtemp
        Dc_p = capacity(temp, phi, 1)*Dphi + capacity(temp, phi, 2)*Dtemp
-       for_du = RESHAPE((/ enthalpy_fusion(u_prev(:,ie), .TRUE.)*pert_u(:,ie), enthalpy_fusion(u_prev(:,ie)) /), SHAPE(for_du))
+
+       for_du = RESHAPE((/ enthalpy_fusion(u_prev(:,ie), 1)*pert_u(:,ie), enthalpy_fusion(u_prev(:,ie)) /), SHAPE(for_du))
        CALL c_diff_fast(for_du, du, du_dummy, j_lev, ng, meth, 10, 2*ne, 1, 2*ne)
-       part1 = du(2*ie,:,:) * SPREAD((Dk_0*c_p - Dc_p*k_0) / c_p**2 * enthalpy_fusion(u_prev(:,ie), .TRUE.)*pert_u(:,ie), 2, dim)
+       part1 = du(2*ie,:,:) * SPREAD((Dk_0*c_p - Dc_p*k_0) / c_p**2 * enthalpy_fusion(u_prev(:,ie), 1)*pert_u(:,ie), 2, dim)
        part2 = du(ie,:,:) * SPREAD(k_0 / c_p, 2, dim)
-       CALL c_diff_fast((part1 + part2) * SPREAD(porosity_term(), 2, dim), d2u, d2u_dummy, j_lev, ng, meth, 10, dim, 1, dim)
+       CALL c_diff_fast((part1 + part2) * SPREAD(porosity_term(psi), 2, dim), d2u, d2u_dummy, j_lev, ng, meth, 10, dim, 1, dim)
        DO i = 1, dim
           user_Drhs(shift+1:shift+ng) = user_Drhs(shift+1:shift+ng) + d2u(i,:,i)
        END DO
@@ -421,7 +441,7 @@ CONTAINS
     IMPLICIT NONE
     INTEGER, INTENT (IN) :: meth
     REAL (pr), DIMENSION (n) :: user_Drhs_diag
-    REAL (pr), DIMENSION (ng) :: temp, phi, Dphi, Dtemp, k_0, c_p, Dk_0, dc_p
+    REAL (pr), DIMENSION (ng) :: psi, temp, phi, Dphi, Dtemp, k_0, c_p, Dk_0, dc_p
     INTEGER :: ie, shift, i
     REAL (pr), DIMENSION (ng,dim) :: du, d2u, part1, part2
     REAL (pr), DIMENSION (ne,ng,dim) :: du_prev, du_dummy
@@ -432,22 +452,22 @@ CONTAINS
        user_Drhs_diag(shift+1:shift+ng) = 1.0_pr
     END IF
     IF (IMEXswitch .GE. 0) THEN
-       temp = temperature(u_prev_timestep(shift+1:shift+ng))
-       phi = liquid_fraction(u_prev_timestep(shift+1:shift+ng))
-       Dphi = liquid_fraction(u_prev_timestep(shift+1:shift+ng), .TRUE.)
-       Dtemp = Dtemperature(u_prev_timestep(shift+1:shift+ng), temp)
+       psi = u(:,n_var_porosity)
+       temp = u(:,n_var_temp)
+       Dtemp = u(:,n_var_dtemp)
+       phi = u(:,n_var_lfrac)
+       Dphi = u(:,n_var_dlfrac)
        k_0 = conductivity(temp, phi)
        c_p = capacity(temp, phi)
        Dk_0 = conductivity(temp, phi, 1)*Dphi + conductivity(temp, phi, 2)*Dtemp
        Dc_p = capacity(temp, phi, 1)*Dphi + capacity(temp, phi, 2)*Dtemp
-       CALL c_diff_fast(enthalpy_fusion(u_prev_timestep(shift+1:shift+ng)), du_prev, du_dummy, j_lev, ng, meth, 10, ne, 1, ne)
+
+       CALL c_diff_fast(enthalpy_fusion(u(:,ie)), du_prev, du_dummy, j_lev, ng, meth, 10, ne, 1, ne)
        CALL c_diff_diag(du, d2u, j_lev, ng, meth, meth, -11)
        part1 = du * du_prev(ie,:,:) * SPREAD((Dk_0*c_p - Dc_p*k_0) / c_p**2, 2, dim)
        part2 = d2u * SPREAD(k_0 / c_p, 2, dim)
-       user_Drhs_diag(shift+1:shift+ng) = SUM(part1 + part2, 2) * &
-          enthalpy_fusion(u_prev_timestep(shift+1:shift+ng), .TRUE.) * porosity_term()
+       user_Drhs_diag(shift+1:shift+ng) = SUM(part1 + part2, 2) * enthalpy_fusion(u(:,ie), 1) * porosity_term(psi)
     END IF
-
   END FUNCTION user_Drhs_diag
 
   FUNCTION user_chi (nlocal, t_local )
@@ -469,8 +489,8 @@ CONTAINS
     REAL (pr), DIMENSION (nlocal,dim) :: user_mapping
 
     user_mapping(:,1:dim) = xlocal(:,1:dim)
-
   END FUNCTION user_mapping
+
   !
   ! Calculate any statitics
   !
@@ -522,7 +542,6 @@ CONTAINS
       END IF
     END IF
   END SUBROUTINE user_stats
-
 
   SUBROUTINE user_cal_force (u, n, t_local, force, drag, lift)
     !--Calculates drag and lift on obstacle using penalization formula
@@ -600,8 +619,6 @@ CONTAINS
     END IF
   END SUBROUTINE user_read_input
 
-
-
   !
   ! calculate any additional variables
   !
@@ -619,20 +636,13 @@ CONTAINS
        u(:,n_var_enthalpy) = enthalpy(u(:,n_var_temp), lf_from_temperature(u(:,n_var_temp)))
     END IF
     u(:,n_var_temp) = temperature(u(:,n_var_enthalpy))
+    u(:,n_var_dtemp) = Dtemperature(u(:,n_var_enthalpy), u(:,n_var_temp))
     u(:,n_var_lfrac) = liquid_fraction(u(:,n_var_enthalpy))
+    u(:,n_var_dlfrac) = liquid_fraction(u(:,n_var_enthalpy), 1)
     u(:,n_var_porosity) = porosity(u(:,n_var_lfrac), u(:,n_var_porosity))
     u(:,n_var_pressure) = 0.0_pr
   END SUBROUTINE user_additional_vars
 
-  FUNCTION lf_from_temperature(temperature)
-    IMPLICIT NONE
-    REAL (pr), INTENT(IN) :: temperature(:)
-    REAL (pr) :: lf_from_temperature(SIZE(temperature))
-    REAL (pr) :: lf_der
-
-    lf_der = 1.0_pr/(fusion_delta)
-    lf_from_temperature = 1.0_pr/(1.0_pr + EXP(-4*lf_der*(temperature - 1.0_pr)))
-  END FUNCTION lf_from_temperature
   !
   ! calculate any additional scalar variables
   !
@@ -642,9 +652,6 @@ CONTAINS
   SUBROUTINE user_scalar_vars( flag )
     IMPLICIT NONE
     INTEGER , INTENT(IN) :: flag ! 0- called during adaption to IC, 1 called during main integration loop
-
-
-
   END SUBROUTINE user_scalar_vars
 
   !
@@ -695,7 +702,6 @@ CONTAINS
       PRINT *, '--- INFINITE ---'
       CALL ABORT
     END IF
-
   END SUBROUTINE user_cal_cfl
 
   SUBROUTINE user_init_sgs_model( )
@@ -728,11 +734,11 @@ CONTAINS
     IMPLICIT NONE
   END SUBROUTINE user_post_process
 
-  FUNCTION liquid_fraction (enthalpy, is_D)
+  ELEMENTAL FUNCTION liquid_fraction (enthalpy, is_D)
     IMPLICIT NONE
-    REAL (pr),         INTENT(IN) :: enthalpy(:)
-    LOGICAL, OPTIONAL, INTENT(IN) :: is_D
-    REAL (pr) :: liquid_fraction(SIZE(enthalpy))
+    REAL (pr),         INTENT(IN) :: enthalpy
+    INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL (pr) :: liquid_fraction
 
     IF (smoothing_method.EQ.0) THEN         ! C^0
       liquid_fraction = lf_piecewise(enthalpy, is_D)
@@ -743,31 +749,40 @@ CONTAINS
     END IF
   END FUNCTION liquid_fraction
 
-  FUNCTION lf_piecewise (enthalpy, is_D)
+  ELEMENTAL FUNCTION lf_from_temperature(temperature)
     IMPLICIT NONE
-    REAL (pr),         INTENT(IN) :: enthalpy(:)
-    LOGICAL, OPTIONAL, INTENT(IN) :: is_D
-    REAL (pr) :: lf_piecewise(SIZE(enthalpy))
+    REAL (pr), INTENT(IN) :: temperature
+    REAL (pr) :: lf_from_temperature
     REAL (pr) :: lf_der
+
+    lf_der = 1.0_pr/fusion_delta
+    lf_from_temperature = 1.0_pr/(1.0_pr + EXP(-4*lf_der*(temperature - 1.0_pr)))
+  END FUNCTION lf_from_temperature
+
+  ELEMENTAL FUNCTION lf_piecewise (enthalpy, is_D)
+    IMPLICIT NONE
+    REAL (pr),         INTENT(IN) :: enthalpy
+    INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL (pr) :: lf_piecewise, lf_der
 
     lf_der = 1.0_pr/(enthalpy_L - enthalpy_S)           ! first derivative of liquid fraction on enthalpy
 
-    IF (.NOT.PRESENT(is_D).OR.(.NOT.is_D)) THEN
+    IF (.NOT.PRESENT(is_D)) THEN
       lf_piecewise = MAX(0.0_pr, MIN(1.0_pr, (enthalpy - enthalpy_S)*lf_der))
     ELSE
-      WHERE (enthalpy_S.LT.enthalpy .AND. enthalpy.LT.enthalpy_L)
+      IF (enthalpy_S.LT.enthalpy .AND. enthalpy.LT.enthalpy_L) THEN
         lf_piecewise = lf_der
-      ELSEWHERE
+      ELSE
         lf_piecewise = 0.0_pr
-      END WHERE
+      END IF
     END IF
   END FUNCTION lf_piecewise
 
-  FUNCTION lf_exponent (enthalpy, is_D)
+  ELEMENTAL FUNCTION lf_exponent (enthalpy, is_D)
     IMPLICIT NONE
-    REAL (pr),         INTENT(IN) :: enthalpy(:)
-    LOGICAL, OPTIONAL, INTENT(IN) :: is_D
-    REAL (pr) :: lf_exponent(SIZE(enthalpy))
+    REAL (pr),         INTENT(IN) :: enthalpy
+    INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL (pr) :: lf_exponent
     REAL (pr) :: enthalpy_delta, halfpoint, lf_der
 
     enthalpy_delta = fusion_delta + fusion_heat         ! change of enthalpy for fusion
@@ -776,18 +791,18 @@ CONTAINS
 
     lf_exponent = EXP(-4*lf_der*(enthalpy - halfpoint))
 
-    IF (.NOT.PRESENT(is_D).OR.(.NOT.is_D)) THEN
+    IF (.NOT.PRESENT(is_D)) THEN
       lf_exponent = 1.0_pr/(1.0_pr + lf_exponent)
     ELSE
       lf_exponent = 4*lf_der*lf_exponent/(1.0_pr + lf_exponent)**2
     END IF
   END FUNCTION lf_exponent
 
-  FUNCTION lf_cubic_splines (enthalpy, is_D)
+  ELEMENTAL FUNCTION lf_cubic_splines (enthalpy, is_D)
     IMPLICIT NONE
-    REAL (pr),         INTENT(IN) :: enthalpy(:)
-    LOGICAL, OPTIONAL, INTENT(IN) :: is_D
-    REAL (pr) :: lf_cubic_splines(SIZE(enthalpy))
+    REAL (pr),         INTENT(IN) :: enthalpy
+    INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL (pr) :: lf_cubic_splines
     REAL (pr), DIMENSION(4) :: coeff
     REAL (pr) :: enthalpy_delta, halfpoint, delta, lf_der
     REAL (pr) :: enthalpy_Sm, enthalpy_Sp, enthalpy_Lm, enthalpy_Lp
@@ -805,143 +820,166 @@ CONTAINS
     coeff = Spline_cubic(enthalpy_Sm, enthalpy_Sp, 0.0_pr, smoothing_width, 0.0_pr, lf_der)
     lf_cubic_splines = lf_piecewise(enthalpy, is_D)
 
-    IF (.NOT.PRESENT(is_D).OR.(.NOT.is_D)) THEN
-      WHERE (enthalpy.GT.enthalpy_Sm .AND. enthalpy.LE.enthalpy_Sp)
+    IF (.NOT.PRESENT(is_D)) THEN
+      IF (enthalpy.GT.enthalpy_Sm .AND. enthalpy.LE.enthalpy_Sp) THEN
         lf_cubic_splines = coeff(2)*enthalpy**2 + coeff(3)*enthalpy + coeff(4)
-      ELSEWHERE (enthalpy.GT.enthalpy_Lm .AND. enthalpy.LE.enthalpy_Lp)
+      ELSE IF (enthalpy.GT.enthalpy_Lm .AND. enthalpy.LE.enthalpy_Lp) THEN
         lf_cubic_splines = 1.0_pr - coeff(2)*(2*halfpoint - enthalpy)**2 - coeff(3)*(2*halfpoint-enthalpy) - coeff(4)
-      END WHERE
+      END IF
     ELSE
-      WHERE (enthalpy.GT.enthalpy_Sm .AND. enthalpy.LE.enthalpy_Sp)
+      IF (enthalpy.GT.enthalpy_Sm .AND. enthalpy.LE.enthalpy_Sp) THEN
         lf_cubic_splines = coeff(2)*enthalpy*2 + coeff(3)
-      ELSEWHERE (enthalpy.GT.enthalpy_Lm .AND. enthalpy.LE.enthalpy_Lp)
+      ELSE IF (enthalpy.GT.enthalpy_Lm .AND. enthalpy.LE.enthalpy_Lp) THEN
         lf_cubic_splines = coeff(2)*(2*halfpoint - enthalpy)*2 + coeff(3)
-      END WHERE
+      END IF
     END IF
   END FUNCTION lf_cubic_splines
 
-  FUNCTION porosity (liquid_fraction, previous)
+  ELEMENTAL FUNCTION porosity (liquid_fraction, previous)
     IMPLICIT NONE
-    REAL (pr), INTENT(IN) :: liquid_fraction(:), previous(:)
-    REAL (pr) :: porosity(SIZE(liquid_fraction))
+    REAL (pr), INTENT(IN) :: liquid_fraction, previous
+    REAL (pr) :: porosity
     porosity = MAX(0.0_pr, MIN(previous, initial_porosity*(1.0_pr - liquid_fraction)))
   END FUNCTION porosity
 
-  FUNCTION get_porosity ()
+  ELEMENTAL FUNCTION porosity_term (porosity)
     IMPLICIT NONE
-    REAL (pr) :: get_porosity(nwlt)
-    get_porosity = u(:,n_var_porosity)
-  END FUNCTION get_porosity
-
-  FUNCTION porosity_term ()
-    IMPLICIT NONE
-    REAL (pr) :: porosity_term(nwlt)
-    porosity_term = (1.0_pr - u(:,n_var_porosity)) / (1.0_pr - initial_porosity)
+    REAL (pr), INTENT(IN) :: porosity
+    REAL (pr) :: porosity_term
+    porosity_term = (1.0_pr - porosity) / (1.0_pr - initial_porosity)
   END FUNCTION porosity_term
 
-  FUNCTION conductivity (temperature, liquid_fraction, is_D)
+  ELEMENTAL FUNCTION conductivity (temperature, liquid_fraction, is_D)
     IMPLICIT NONE
-    REAL (pr), INTENT(IN) :: temperature(:), liquid_fraction(:)
-    REAL (pr) :: conductivity(SIZE(temperature))
+    REAL (pr),         INTENT(IN) :: temperature, liquid_fraction
     INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL (pr) :: conductivity
 
     conductivity = three_parameter_model(temperature, liquid_fraction, &
       Dconductivity_solid, Dconductivity_liquid, conductivity_fusion, is_D)
   END FUNCTION conductivity
 
-  FUNCTION capacity (temperature, liquid_fraction, is_D)
+  ELEMENTAL FUNCTION capacity (temperature, liquid_fraction, is_D)
     IMPLICIT NONE
-    REAL (pr), INTENT(IN) :: temperature(:), liquid_fraction(:)
-    REAL (pr) :: capacity(SIZE(temperature))
+    REAL (pr),         INTENT(IN) :: temperature, liquid_fraction
     INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL (pr) :: capacity
 
     capacity = three_parameter_model(temperature, liquid_fraction, &
       Dcapacity_solid, Dcapacity_liquid, capacity_fusion, is_D)
   END FUNCTION capacity
 
   ! is_D == 1 for partial derivative over \phi and 2 for derivative over temp
-  FUNCTION three_parameter_model (temperature, liquid_fraction, Dsolid, Dliquid, fusion_jump, is_D)
+  ELEMENTAL FUNCTION three_parameter_model (temperature, liquid_fraction, Dsolid, Dliquid, fusion_jump, is_D)
     IMPLICIT NONE
-    REAL (pr), INTENT(IN) :: temperature(:), liquid_fraction(:)
-    REAL (pr) :: three_parameter_model(SIZE(temperature))
-    REAL (pr) :: Dsolid, Dliquid, fusion_jump
+    REAL (pr),         INTENT(IN) :: temperature, liquid_fraction, Dsolid, Dliquid, fusion_jump
     INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL (pr) :: three_parameter_model
 
     IF (.NOT.PRESENT(is_D)) THEN
       three_parameter_model = 1.0_pr + Dsolid*temperature + &
         (fusion_jump + (Dliquid - Dsolid)*(temperature - 1.0_pr))*liquid_fraction
-    ELSEIF (is_D.EQ.1) THEN
+    ELSE IF (is_D.EQ.1) THEN
       three_parameter_model = fusion_jump + (Dliquid - Dsolid)*(temperature - 1.0_pr)
-    ELSEIF (is_D.EQ.2) THEN
+    ELSE IF (is_D.EQ.2) THEN
       three_parameter_model = Dsolid + (Dliquid - Dsolid)*liquid_fraction
     END IF
   END FUNCTION three_parameter_model
 
-  FUNCTION temperature (enthalpy)
+  ELEMENTAL FUNCTION temperature (enthalpy)
     IMPLICIT NONE
-    REAL (pr), INTENT(IN) :: enthalpy(:)
-    REAL (pr) :: temperature(SIZE(enthalpy))
-    REAL (pr) :: g1(SIZE(enthalpy)), g2(SIZE(enthalpy)), g3(SIZE(enthalpy)), phi(SIZE(enthalpy))
+    REAL (pr), INTENT(IN) :: enthalpy
+    REAL (pr) :: temperature, g1, g2, g3, phi
 
     phi = liquid_fraction(enthalpy)
     g2 = Dcapacity_solid*(1.0_pr - phi) + Dcapacity_liquid*phi
-    WHERE (g2.GE.eps_zero)
+    IF (g2.GE.eps_zero) THEN
       g1 = 1.0_pr*(1.0_pr - phi) + (1.0_pr + Dcapacity_solid - Dcapacity_liquid + capacity_fusion)*phi
       g3 = enthalpy_fusion(enthalpy) + ((Dcapacity_solid - Dcapacity_liquid)/2 + capacity_fusion)*phi
       temperature = (SQRT(g1**2 + 2*g2*g3) - g1)/g2
-    ELSEWHERE
+    ELSE
       temperature = enthalpy_fusion(enthalpy)
-    END WHERE
+    END IF
   END FUNCTION temperature
 
-  FUNCTION Dtemperature (enthalpy, temperature)
+  ELEMENTAL FUNCTION Dtemperature (enthalpy, temperature)
     IMPLICIT NONE
-    REAL (pr), INTENT(IN) ::  enthalpy(:), temperature(:)
-    REAL (pr) :: Dtemperature(SIZE(enthalpy))
-    REAL (pr) :: Dg2(SIZE(enthalpy)), Dg1(SIZE(enthalpy)), g1(SIZE(enthalpy)), g2(SIZE(enthalpy))
-    REAL (pr) :: Dg3(SIZE(enthalpy)), phi(SIZE(enthalpy)), Dphi(SIZE(enthalpy))
+    REAL (pr), INTENT(IN) :: enthalpy, temperature
+    REAL (pr) :: Dtemperature, Dg2, Dg1, g1, g2, Dg3, phi, Dphi
 
     phi = liquid_fraction(enthalpy)
     g2 = Dcapacity_solid*(1.0_pr - phi) + Dcapacity_liquid*phi
-    WHERE (g2.GE.eps_zero)
-      Dphi = liquid_fraction(enthalpy, .TRUE.)
+    IF (g2.GE.eps_zero) THEN
+      Dphi = liquid_fraction(enthalpy, 1)
       g1 = 1.0_pr + (Dcapacity_solid - Dcapacity_liquid + capacity_fusion)*phi
       Dg1 = (Dcapacity_solid - Dcapacity_liquid + capacity_fusion)*Dphi
       Dg2 = (Dcapacity_liquid - Dcapacity_solid)*Dphi
-      Dg3 = enthalpy_fusion(enthalpy, .TRUE.) + ((Dcapacity_solid - Dcapacity_liquid)/2 + capacity_fusion)*Dphi
+      Dg3 = enthalpy_fusion(enthalpy, 1) + ((Dcapacity_solid - Dcapacity_liquid)/2 + capacity_fusion)*Dphi
       Dtemperature = (Dg3 - Dg1*temperature - Dg2*(temperature**2)/2) / (g2*temperature + g1)
-    ELSEWHERE
-      Dtemperature = enthalpy_fusion(enthalpy, .TRUE.)
-    END WHERE
+    ELSE
+      Dtemperature = enthalpy_fusion(enthalpy, 1)
+    END IF
   END FUNCTION Dtemperature
 
-  ! is_D == 0 for RHS, == 1 for DRHS and DRHS_diag
-  FUNCTION enthalpy_fusion (enthalpy, is_D)
+  ELEMENTAL FUNCTION enthalpy (temperature, liquid_fraction)
     IMPLICIT NONE
-    REAL (pr),         INTENT(IN) :: enthalpy(:)
-    LOGICAL, OPTIONAL, INTENT(IN) :: is_D
-    REAL (pr) :: enthalpy_fusion(SIZE(enthalpy))
+    REAL (pr), INTENT(IN) :: temperature, liquid_fraction
+    REAL (pr) :: enthalpy
 
-    IF (.NOT.PRESENT(is_D).OR.(.NOT.is_D)) THEN
+    enthalpy = temperature + Dcapacity_solid/2*temperature**2 + liquid_fraction* &
+      (fusion_heat + (Dcapacity_solid - Dcapacity_liquid + capacity_fusion)*(temperature - 1.0_pr) + &
+      (Dcapacity_liquid - Dcapacity_solid)/2*(temperature**2 - 1.0_pr))
+  END FUNCTION enthalpy
+
+  ELEMENTAL FUNCTION enthalpy_fusion (enthalpy, is_D)
+    IMPLICIT NONE
+    REAL (pr),         INTENT(IN) :: enthalpy
+    INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL (pr) :: enthalpy_fusion
+
+    IF (.NOT.PRESENT(is_D)) THEN
         enthalpy_fusion = enthalpy - fusion_heat*liquid_fraction(enthalpy)
     ELSE
-        enthalpy_fusion = 1.0_pr - fusion_heat*liquid_fraction(enthalpy, .TRUE.)
+        enthalpy_fusion = 1.0_pr - fusion_heat*liquid_fraction(enthalpy, 1)
     END IF
   END FUNCTION enthalpy_fusion
 
-  FUNCTION Neumann_bc (enthalpy, porosity)
+  ELEMENTAL FUNCTION Neumann_bc (enthalpy, porosity)
     IMPLICIT NONE
-    REAL (pr), INTENT(IN) :: enthalpy(:), porosity(:)
-    REAL (pr) :: Neumann_bc(SIZE(enthalpy))
-    REAL (pr) :: temp(SIZE(enthalpy)), phi(SIZE(enthalpy))
+    REAL (pr), INTENT(IN) :: enthalpy, porosity
+    REAL (pr) :: Neumann_bc, temp, phi
 
     temp = temperature(enthalpy)
     phi = liquid_fraction(enthalpy)
     Neumann_bc = (1.0_pr - porosity) * conductivity(temp, phi) / &
-      capacity(temp, phi) * (1.0_pr - fusion_heat*liquid_fraction(enthalpy, .TRUE.))
+      capacity(temp, phi) * (1.0_pr - fusion_heat*liquid_fraction(enthalpy, 1))
   END FUNCTION Neumann_bc
 
-  FUNCTION Spline_cubic (r_p, l_p, fr_p, fl_p, dfr_p, dfl_p)
+  ELEMENTAL FUNCTION Dirichlet_bc (enthalpy)
+    IMPLICIT NONE
+    REAL (pr), INTENT(IN) :: enthalpy
+    REAL (pr) :: Dirichlet_bc
+    REAL (pr) :: temp, Dtemp
+
+    temp = temperature(enthalpy)
+    Dtemp = Dtemperature(enthalpy, temp)
+    Dirichlet_bc = F_heat_flux(temp, 1)*Dtemp
+  END FUNCTION Dirichlet_bc
+
+  ELEMENTAL FUNCTION F_heat_flux (temperature, is_D)
+    IMPLICIT NONE
+    REAL (pr),         INTENT(IN) :: temperature
+    INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL (pr) :: F_heat_flux
+
+    IF (.NOT.PRESENT(is_D)) THEN
+      F_heat_flux = convective_transfer*temperature + emissivity*radiative_transfer*(temperature + absolute_temperature)**(dim+1)
+    ELSE
+      F_heat_flux = convective_transfer + emissivity*radiative_transfer*(temperature + absolute_temperature)**dim*(dim+1)
+    END IF
+  END FUNCTION F_heat_flux
+
+  PURE FUNCTION Spline_cubic (r_p, l_p, fr_p, fl_p, dfr_p, dfl_p)
     IMPLICIT NONE
     REAL (pr), INTENT(IN) :: r_p, l_p, fr_p, fl_p, dfr_p, dfl_p
     REAL (pr), DIMENSION(4) :: Spline_cubic
@@ -955,40 +993,6 @@ CONTAINS
     Spline_cubic(4) = (r_p**3*(fl_p - dfl_p*l_p) + r_p*(dfr_p*l_p**3 + 3*fr_p*l_p**2) &
       - fr_p*l_p**3 - r_p**2*(3*fl_p*l_p - dfl_p*l_p**2 + dfr_p*l_p**2))/(r_p-l_p)**3
   END FUNCTION Spline_cubic
-
-  FUNCTION Dirichlet_bc (enthalpy)
-    IMPLICIT NONE
-    REAL (pr), INTENT(IN) :: enthalpy(:)
-    REAL (pr) :: Dirichlet_bc(SIZE(enthalpy))
-    REAL (pr) :: temp(SIZE(enthalpy)), Dtemp(SIZE(enthalpy))
-
-    temp = temperature(enthalpy)
-    Dtemp = Dtemperature(enthalpy, temp)
-    Dirichlet_bc = F_heat_flux(temp, .TRUE.)*Dtemp
-  END FUNCTION Dirichlet_bc
-
-  FUNCTION F_heat_flux (temperature, is_D)
-    IMPLICIT NONE
-    REAL (pr), INTENT(IN) :: temperature(:)
-    REAL (pr) :: F_heat_flux(SIZE(temperature))
-    LOGICAL, OPTIONAL, INTENT(IN) :: is_D
-
-    IF (.NOT.PRESENT(is_D).OR.(.NOT.is_D)) THEN
-      F_heat_flux = convective_transfer*temperature + emissivity*radiative_transfer*(temperature + absolute_temperature)**(dim+1)
-    ELSE
-      F_heat_flux = convective_transfer + emissivity*radiative_transfer*(temperature + absolute_temperature)**dim*(dim+1)
-    END IF
-  END FUNCTION F_heat_flux
-
-  FUNCTION enthalpy (temperature, liquid_fraction)
-    IMPLICIT NONE
-    REAL (pr), INTENT(IN) :: temperature(:), liquid_fraction(:)
-    REAL (pr) :: enthalpy(SIZE(temperature))
-
-    enthalpy = temperature + Dcapacity_solid/2*temperature**2 + liquid_fraction* &
-      (fusion_heat + (Dcapacity_solid - Dcapacity_liquid + capacity_fusion)*(temperature - 1.0_pr) + &
-      (Dcapacity_liquid - Dcapacity_solid)/2*(temperature**2 - 1.0_pr))
-  END FUNCTION enthalpy
 
   FUNCTION laser_heat_flux ()
     IMPLICIT NONE
