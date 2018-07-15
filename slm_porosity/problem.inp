@@ -19,15 +19,16 @@ file_gen = 'res.'
 IC_restart_mode     = 0                     # 0: normal, 1: hard restart, 2: soft restart, 3: from IC
 IC_filename         = 'ic/res.0050.com.res'
 IC_restart_station  = 1                     # restart file number to use (NOT iteration!)
-IC_file_fmt         = 0                     # IC data file format (0 - native restart file, 1-netcdf, 2- A.Wray in fourier space, 3-simple binary)
+IC_file_fmt         = 0                     # IC data file format (0 - native restart file, 1 - netcdf, 2 - A.Wray in fourier space, 3 - simple binary)
 Data_file_format    = F                     # T = formatted, F = unformatted
 IC_adapt_grid       = T                     # If is set to .FALSE. no grid adaptation is done after the data are read.
 do_Sequential_run   = F
 wlog                = T                     # Write file 'results/res._log'
-verb_level          = 1                     # Verbose level: bitwise flag to control screen output
+verb_level          = 1                     # Verbose level (bitwise flag): 1(001) - default, 15(1111) - most detailed
+debug_level         = 0                     # Debug level (bitwise flag): 0(000) - default, 7(111) - most detailed
 
 ### Wavelet thresholding filter
-eps_init        = 0.5e-3                    # EPS used to adapt initial grid
+eps_init        = 1.0e-3                    # EPS used to adapt initial grid
 eps_run         = 1.0e-3                    # EPS used in run
 eps_adapt_steps = 1                         # How many time steps to adapt from eps_init to eps_run
 
@@ -37,7 +38,7 @@ j_lev_init = 2                              # starts adapting IC by having all t
 j_IC       = 20                             # used if the IC data does not have dimensions in it then mxyz(:)*2^(j_IC-1) is used
 J_FILT     = 20
 J_MN       = 2
-J_MX       = 12
+J_MX       = 10
 
 ### Computational domain
 coord_min      = -5.0,    0.0,   -5.0       # XMIN, YMIN, ZMIN, etc
@@ -46,7 +47,7 @@ coord_zone_min = -5e+02, -6e+02, -7e+02     # XMINzone, etc
 coord_zone_max =  5e+02,  6e+02,  7e+02     # XMAXzone, etc
 
 ### Initial mesh
-uniform  =  0,  0,  0                       # Type: (0/1) 0: uniform; 1: non-uniform
+uniform  =  0,  0,  0                       # Type: 0 - uniform, 1 - non-uniform
 M_vector = 12,  2,  2                       # Number of mesh points
 
 ### Wavelet orders
@@ -65,10 +66,10 @@ IMEXtype                = 9                 # 1=(111)L, 2=(121)L, 3=(122)A(1.0),
                                             # A = A-stable method (R_inf follows in parentheses); L = L-stable method (R_inf = 0)
 t_begin = 0
 t_end   = 30
-dt      = 2e-3
+dt      = 2e-2
 dtmax   = 1
 dtmin   = 1e-7                              # If dt < dtmin then exection stops(likely blowing up)
-dtwrite = 1e-2
+dtwrite = 1e-1
 t_adapt = 1e+2                              # When t > t_adapt use an adaptive time step if possible
                                             # NO time adaptation for RK and IMEX methods
 cflmax = 0.25
@@ -76,7 +77,7 @@ cflmin = 0                                  # Exit if cfl < cflmin
 
 ### Scaling variables
 Scale_Meth = 3                              # Method: 1 - Linf, 2 - pointwise L2, 3 - integral L2
-scl_fltwt  = 0.0                            # Filter Weight: scl_new = scl_fltwt*scl_old + (1-scl_fltwt)*scl_new
+scl_fltwt  = 0.0                            # Filter Weight: scl_new = scl_fltwt*scl_old + (1 - scl_fltwt)*scl_new
 Zero_Mean  = F                              # Never used
 
 ### Adjacent zone
@@ -84,11 +85,11 @@ IJ_ADJ   = 1, 1, 1                          # IJ_ADJ(-1:1) = (coarser level), (s
 ADJ_type = 1, 1, 1                          # ADJ_type(-1:1) = (coarser level), (same level), (finer level) # (0 - less conservative, 1 - more conservative)
 
 ### Boundary conditions
-periodic = 0, 0, 0                          # (0/1) 0: non-periodic; 1: periodic
-i_h      = 123456                           # order of boundaries (1-xmin,2-xmax,3-ymin,4-ymax,5-zmin,6-zmax)
+periodic = 0, 0, 0                          # 0 - non-periodic, 1 - periodic
+i_h      = 123456                           # order of boundaries: 1 - xmin, 2 - xmax, 3 - ymin, 4 - ymax, 5 - zmin, 6 - zmax
 i_l      = 111111                           # algebraic/evolution (1/0) BC order: (lrbt)
 BNDzone  = F                                # BNDzone
-BCtype   = 0                                # BCtype (0 - Dirichlet, 1 - Neuman, 2 - Mixed)
+BCtype   = 0                                # BCtype: 0 - Dirichlet, 1 - Neuman, 2 - Mixed
 
 ### Linear solvers
 GMRESflag            = T
@@ -145,8 +146,8 @@ absorptivity = 0.3
 emissivity = 0.7
 
 # initial conditions
-initial_temp = 2.0
-initial_pool_radius = 2.0
+initial_temp = 1.8
+initial_pool_radius = 1.8
 initial_laser_position = 0, 0, 0            # starting point of the center of the laser beam
 
 # numerics-specific parameters

@@ -7,9 +7,9 @@ MODULE user_case_db
   ! criteria or need to be interpolated to new grid at each time step
   ! or that are needed for vector derivatives.
   !
-  INTEGER , PARAMETER :: n_var_db =  7
-  INTEGER , PARAMETER :: n_ivar_db =  2
-  INTEGER , PARAMETER :: max_dim  = 3
+  INTEGER , PARAMETER :: n_var_db  = 5
+  INTEGER , PARAMETER :: n_ivar_db = 0
+  INTEGER , PARAMETER :: max_dim   = 3
 
   !
   ! NOTE: db_tree and db_tree1 will not use the above parameters, although
