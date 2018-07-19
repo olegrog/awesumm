@@ -64,7 +64,6 @@ MODULE user_case
 
   ! numerics-specific parameters
   INTEGER smoothing_method
-  REAL(pr) :: smoothing_width
   REAL(pr) :: smoothing_factor
   REAL(pr) :: eps_zero
   REAL(pr) :: porosity_scale
@@ -500,7 +499,6 @@ CONTAINS
 
     ! numerics-specific parameters
     call input_integer ('smoothing_method', smoothing_method, 'stop')
-    call input_real ('smoothing_width', smoothing_width, 'stop')
     call input_real ('smoothing_factor', smoothing_factor, 'stop')
     call input_real ('eps_zero', eps_zero, 'stop')
     call input_real ('porosity_scale', porosity_scale, 'stop')
@@ -703,9 +701,7 @@ CONTAINS
 
     IF (smoothing_method.EQ.0) THEN         ! C^0
       liquid_fraction = lf_piecewise(enthalpy, is_D)
-    ELSE IF (smoothing_method.EQ.1) THEN    ! C^1
-      liquid_fraction = lf_cubic_splines(enthalpy, is_D)
-    ELSE IF (smoothing_method.EQ.2) THEN    ! C^\infty
+    ELSE IF (smoothing_method.EQ.1) THEN    ! C^\infty
       liquid_fraction = lf_exponent(enthalpy, is_D)
     END IF
   END FUNCTION liquid_fraction
@@ -749,38 +745,6 @@ CONTAINS
       lf_exponent = 4*Dphi_one*lf_exponent/(1.0_pr + lf_exponent)**2
     END IF
   END FUNCTION lf_exponent
-
-  ELEMENTAL FUNCTION lf_cubic_splines (enthalpy, is_D)
-    IMPLICIT NONE
-    REAL(pr),          INTENT(IN) :: enthalpy
-    INTEGER, OPTIONAL, INTENT(IN) :: is_D
-    REAL(pr) :: lf_cubic_splines
-    REAL(pr), DIMENSION(4) :: coeff
-    REAL(pr) :: delta, enthalpy_Sm, enthalpy_Sp, enthalpy_Lm, enthalpy_Lp
-
-    delta = smoothing_width/Dphi_one              ! width of the cubic splines
-    enthalpy_Sm = enthalpy_S - delta
-    enthalpy_Sp = enthalpy_S + delta
-    enthalpy_Lm = enthalpy_L - delta
-    enthalpy_Lp = enthalpy_L + delta
-
-    coeff = Spline_cubic(enthalpy_Sm, enthalpy_Sp, 0.0_pr, smoothing_width, 0.0_pr, Dphi_one)
-    lf_cubic_splines = lf_piecewise(enthalpy, is_D)
-
-    IF (.NOT.PRESENT(is_D)) THEN
-      IF (enthalpy.GT.enthalpy_Sm .AND. enthalpy.LE.enthalpy_Sp) THEN
-        lf_cubic_splines = coeff(2)*enthalpy**2 + coeff(3)*enthalpy + coeff(4)
-      ELSE IF (enthalpy.GT.enthalpy_Lm .AND. enthalpy.LE.enthalpy_Lp) THEN
-        lf_cubic_splines = 1.0_pr - coeff(2)*(2*enthalpy_one - enthalpy)**2 - coeff(3)*(2*enthalpy_one - enthalpy) - coeff(4)
-      END IF
-    ELSE
-      IF (enthalpy.GT.enthalpy_Sm .AND. enthalpy.LE.enthalpy_Sp) THEN
-        lf_cubic_splines = coeff(2)*enthalpy*2 + coeff(3)
-      ELSE IF (enthalpy.GT.enthalpy_Lm .AND. enthalpy.LE.enthalpy_Lp) THEN
-        lf_cubic_splines = coeff(2)*(2*enthalpy_one - enthalpy)*2 + coeff(3)
-      END IF
-    END IF
-  END FUNCTION lf_cubic_splines
 
   ELEMENTAL FUNCTION porosity (liquid_fraction, previous)
     IMPLICIT NONE
@@ -983,20 +947,5 @@ CONTAINS
     CALL parallel_global_sum(REALMAXVAL=domain_bound)
     domain_bound = sgn*domain_bound
   END FUNCTION domain_bound
-
-  PURE FUNCTION Spline_cubic (r_p, l_p, fr_p, fl_p, dfr_p, dfl_p)
-    IMPLICIT NONE
-    REAL(pr), INTENT(IN) :: r_p, l_p, fr_p, fl_p, dfr_p, dfl_p
-    REAL(pr) :: Spline_cubic(4)
-    !Spline_cubic(1,2,3,4) are coefficient of polynomial of 3rd degree [ax^3+bx^2+cx+d]
-    !where a = Spline_cubic(1) etc.
-    Spline_cubic(1)= (2*fl_p - 2*fr_p - dfl_p*l_p - dfr_p*l_p + dfl_p*r_p + dfr_p*r_p)/(r_p-l_p)**3
-    Spline_cubic(2) = (3*fr_p*l_p - 3*fl_p*l_p - 3*fl_p*r_p + 3*fr_p*r_p + dfl_p*l_p**2 &
-      + 2*dfr_p*l_p**2 - 2*dfl_p*r_p**2 - dfr_p*r_p**2 + dfl_p*l_p*r_p - dfr_p*l_p*r_p)/(r_p-l_p)**3
-    Spline_cubic(3) = (dfl_p*r_p**3 - dfr_p*l_p**3 + dfl_p*l_p*r_p**2 - 2*dfl_p*l_p**2*r_p &
-      + 2*dfr_p*l_p*r_p**2 - dfr_p*l_p**2*r_p + 6*fl_p*l_p*r_p - 6*fr_p*l_p*r_p)/(r_p-l_p)**3
-    Spline_cubic(4) = (r_p**3*(fl_p - dfl_p*l_p) + r_p*(dfr_p*l_p**3 + 3*fr_p*l_p**2) &
-      - fr_p*l_p**3 - r_p**2*(3*fl_p*l_p - dfl_p*l_p**2 + dfr_p*l_p**2))/(r_p-l_p)**3
-  END FUNCTION Spline_cubic
 
 END MODULE user_case

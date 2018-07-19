@@ -151,8 +151,7 @@ initial_pool_radius = 1.8
 initial_laser_position = 0, 0, 0            # starting point of the center of the laser beam
 
 # numerics-specific parameters
-smoothing_method = 2                        # 0 - piecewise C^0; 1 - cubic spline C^1; 2 - exponent C^\infty
-smoothing_width = 0.25                      # width of spline in terms of fusion_delta
+smoothing_method = 1                        # 0 - piecewise C^0, 1 - hyperbolic tangent C^\infty
 smoothing_factor = 10                       # fusion_delta = fusion_delta*smoothing_factor
 eps_zero = 1e-12                            # approximation of zero
 porosity_scale = 10                         # scale factor for mesh adaptation
