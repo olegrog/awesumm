@@ -467,6 +467,9 @@ CONTAINS
   !
   SUBROUTINE user_read_input ()
     IMPLICIT NONE
+    CHARACTER(LEN=*), PARAMETER :: fmt_real = '(A30,F10.7)'
+    CHARACTER(LEN=*), PARAMETER :: stars = REPEAT('*', 20)
+    REAL(pr) :: thickness
 
     ! thermophysical properties
     call input_real ('Dconductivity_solid', Dconductivity_solid, 'stop')
@@ -503,6 +506,18 @@ CONTAINS
     call input_real ('porosity_scale', porosity_scale, 'stop')
     call input_real ('power_factor_2d', power_factor_2d, 'stop')
 
+    ! calculate the real quantities
+    enthalpy_S = enthalpy(1.0_pr - fusion_delta/2, 0.0_pr)
+    enthalpy_L = enthalpy(1.0_pr + fusion_delta/2, 1.0_pr)
+    thickness = (enthalpy_L - enthalpy_S - fusion_heat)/capacity(1.0_pr, 0.5_pr)
+
+    IF (par_rank.EQ.0) THEN
+      PRINT *, stars, ' Real quantities ', stars
+      PRINT fmt_real, 'enthalpy_S =', enthalpy_S
+      PRINT fmt_real, 'enthalpy_L =', enthalpy_L
+      PRINT fmt_real, 'interface thickness =', thickness
+    END IF
+
     ! smooth solid-liquid interface
     fusion_delta = fusion_delta*smoothing_factor
 
@@ -511,12 +526,17 @@ CONTAINS
     enthalpy_one = enthalpy(1.0_pr, 0.5_pr)
     enthalpy_L = enthalpy(1.0_pr + fusion_delta/2, 1.0_pr)
     Dphi_one = 1.0_pr/(enthalpy_L - enthalpy_S)
+    thickness = (enthalpy_L - enthalpy_S - fusion_heat)/capacity(1.0_pr, 0.5_pr)
 
     IF (par_rank.EQ.0) THEN
-      PRINT *, 'enthalpy_S = ', enthalpy_S
-      PRINT *, 'enthalpy_one = ', enthalpy_one
-      PRINT *, 'enthalpy_L = ', enthalpy_L
-      PRINT *, 'Dphi_one = ', Dphi_one
+      PRINT *, stars, ' Computational quantities ', stars
+      PRINT fmt_real, 'enthalpy_S =', enthalpy_S
+      PRINT fmt_real, 'enthalpy_L =', enthalpy_L
+      PRINT fmt_real, 'enthalpy(1) =', enthalpy_one
+      PRINT fmt_real, 'Dphi(1) =', Dphi_one
+      PRINT fmt_real, 'capacity(1) =', capacity(1.0_pr, 0.5_pr)
+      PRINT fmt_real, 'conductivity(1) =', conductivity(1.0_pr, 0.5_pr)
+      PRINT fmt_real, 'interface thickness =', thickness
     END IF
   END SUBROUTINE user_read_input
 
