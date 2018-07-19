@@ -404,14 +404,14 @@ CONTAINS
     REAL(pr) :: phi(nwlt), h_arr(dim,nwlt), vars(dim+3)
     REAL(pr) :: xmin, xmax, ymax, zmin, h_max
     REAL(pr), PARAMETER :: threshold = 0.5_pr
-    CHARACTER(LEN=16), PARAMETER :: file_name = 'melting_pool.txt'
-    CHARACTER(LEN=100) :: header, columns
+    CHARACTER(LEN=200) :: melting_pool, header, columns
 
+    melting_pool = TRIM(res_path)//'melting_pool.txt'
     IF (startup_flag.EQ.0) THEN
       IF (par_rank.EQ.0) THEN
         header = '# time      max_temp    volume      length      depth'
         IF (dim.EQ.3) header = TRIM(header) // '       width'
-        OPEN(555, FILE=file_name, STATUS='replace', ACTION='write')
+        OPEN(555, FILE=melting_pool, STATUS='replace', ACTION='write')
         WRITE(555, *) TRIM(header)
         CLOSE(555)
       END IF
@@ -437,7 +437,7 @@ CONTAINS
         columns = '(' // REPEAT('ES10.3, 2x', SIZE(vars)) // ')'
         vars = (/ t, max_temp, volume, length, depth /)
         IF (dim.EQ.3) vars(SIZE(vars)) = width
-        OPEN(555, FILE=file_name, STATUS='old', POSITION='append', ACTION='write')
+        OPEN(555, FILE=melting_pool, STATUS='old', POSITION='append', ACTION='write')
         WRITE(555, TRIM(columns)) vars
         CLOSE(555)
       END IF
