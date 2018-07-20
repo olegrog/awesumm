@@ -24,14 +24,14 @@ MODULE user_case
   !
   INTEGER n_var_enthalpy
   INTEGER n_var_porosity
-  INTEGER n_var_h_star
+  INTEGER n_var_diffus
   INTEGER n_var_lfrac
   INTEGER n_var_temp
   INTEGER n_var_pressure
 
   ! quantities used in RHS, DRHS, and algebraic BC
   REAL(pr), DIMENSION(:), ALLOCATABLE :: diffusivity_prev, Ddiffusivity_prev, Dh_star_prev
-  REAL(pr), DIMENSION(:,:), ALLOCATABLE :: diff_h_star_prev
+  REAL(pr), DIMENSION(:,:), ALLOCATABLE :: grad_h_star_prev
   REAL(pr), DIMENSION(:), ALLOCATABLE :: enthalpy_prev, temp_prev, Dtemp_prev, psi_prev
   INTEGER, DIMENSION(:), ALLOCATABLE :: i_p_face
 
@@ -66,7 +66,7 @@ MODULE user_case
   INTEGER smoothing_method
   REAL(pr) :: smoothing_factor
   REAL(pr) :: eps_zero
-  REAL(pr) :: porosity_scale
+  REAL(pr) :: diffusivity_scale
   REAL(pr) :: power_factor_2d
 
   ! derived quantities
@@ -93,10 +93,10 @@ CONTAINS
     INTEGER :: i
 
     CALL register_var('enthalpy',         integrated=t, adapt=ff, saved=t, interpolate=ff, exact=ff, req_restart=t)
-    CALL register_var('porosity',         integrated=f, adapt=tt, saved=t, interpolate=ff, exact=ff, req_restart=f)
-    CALL register_var('enthalpy_star',    integrated=f, adapt=tt, saved=t, interpolate=ff, exact=ff, req_restart=f)
+    CALL register_var('porosity',         integrated=f, adapt=ff, saved=t, interpolate=ff, exact=ff, req_restart=f)
+    CALL register_var('diffusivity',      integrated=f, adapt=tt, saved=t, interpolate=ff, exact=ff, req_restart=f)
     CALL register_var('liquid_fraction',  integrated=f, adapt=ff, saved=t, interpolate=ff, exact=ff, req_restart=f)
-    CALL register_var('temperature',      integrated=f, adapt=ff, saved=t, interpolate=ff, exact=ff, req_restart=f)
+    CALL register_var('temperature',      integrated=f, adapt=ft, saved=t, interpolate=ff, exact=ff, req_restart=f)
     CALL register_var('pressure',         integrated=f, adapt=ff, saved=f, interpolate=ff, exact=ff, req_restart=f)
 
     CALL setup_mapping()
@@ -104,7 +104,7 @@ CONTAINS
 
     n_var_enthalpy  = get_index('enthalpy')
     n_var_porosity  = get_index('porosity')
-    n_var_h_star    = get_index('enthalpy_star')
+    n_var_diffus    = get_index('diffusivity')
     n_var_lfrac     = get_index('liquid_fraction')
     n_var_temp      = get_index('temperature')
     n_var_pressure  = get_index('pressure')
@@ -117,8 +117,8 @@ CONTAINS
 
     ALLOCATE(Umn(n_var))
     Umn = 0.0_pr !set up here if mean quantities are not zero and used in scales or equation
-    scaleCoeff = 1.
-    scaleCoeff(n_var_porosity) = porosity_scale
+    scaleCoeff = 1.0_pr
+    scaleCoeff(n_var_diffus) = diffusivity_scale
 
     IF (verb_level.GT.0) THEN
       PRINT *, 'n_integrated = ', n_integrated
@@ -296,7 +296,7 @@ CONTAINS
     END IF
 
     IF (IMEXswitch.GE.0) THEN
-      for_du = diff_h_star_prev * SPREAD(diffusivity_prev, 2, dim)
+      for_du = grad_h_star_prev * SPREAD(diffusivity_prev, 2, dim)
       CALL c_diff_fast(for_du, d2u, d2u_dummy, j_lev, ng, meth, 10, dim, 1, dim)
       DO i = 1, dim
         user_rhs(shift+1:shift+ng) = user_rhs(shift+1:shift+ng) + d2u(i,:,i)
@@ -328,7 +328,7 @@ CONTAINS
       CALL c_diff_fast(pert_h_star, du, du_dummy, j_lev, ng, meth, 10, ne, 1, ne)
       diff_pert_h_star = du(ie,:,:)
       for_du = &
-        diff_h_star_prev * SPREAD(Ddiffusivity_prev * pert_u(:,ie), 2, dim) + &
+        grad_h_star_prev * SPREAD(Ddiffusivity_prev * pert_u(:,ie), 2, dim) + &
         diff_pert_h_star * SPREAD(diffusivity_prev, 2, dim)
       CALL c_diff_fast(for_du, d2u, d2u_dummy, j_lev, ng, meth, 10, dim, 1, dim)
       DO i = 1, dim
@@ -362,7 +362,7 @@ CONTAINS
     IF (IMEXswitch.GE.0) THEN
       CALL c_diff_diag(du, d2u, j_lev, ng, meth, meth, -11)
       for_du = &
-        du * diff_h_star_prev * SPREAD(Ddiffusivity_prev, 2, dim) + &
+        du * grad_h_star_prev * SPREAD(Ddiffusivity_prev, 2, dim) + &
         d2u * SPREAD(diffusivity_prev * Dh_star_prev, 2, dim)
       user_Drhs_diag(shift+1:shift+ng) = SUM(for_du, 2)
     END IF
@@ -501,7 +501,7 @@ CONTAINS
     call input_integer ('smoothing_method', smoothing_method, 'stop')
     call input_real ('smoothing_factor', smoothing_factor, 'stop')
     call input_real ('eps_zero', eps_zero, 'stop')
-    call input_real ('porosity_scale', porosity_scale, 'stop')
+    call input_real ('diffusivity_scale', diffusivity_scale, 'stop')
     call input_real ('power_factor_2d', power_factor_2d, 'stop')
 
     ! calculate the real quantities
@@ -559,7 +559,7 @@ CONTAINS
     u(:,n_var_temp) = temperature(u(:,n_var_enthalpy))
     u(:,n_var_lfrac) = liquid_fraction(u(:,n_var_enthalpy))
     u(:,n_var_porosity) = porosity(u(:,n_var_porosity), u(:,n_var_lfrac))
-    u(:,n_var_h_star) = u(:,n_var_enthalpy) - fusion_heat*u(:,n_var_lfrac)
+    u(:,n_var_diffus) = diffusivity(u(:,n_var_enthalpy), u(:,n_var_porosity))
   END SUBROUTINE user_additional_vars
 
   !
@@ -655,41 +655,36 @@ CONTAINS
 
   SUBROUTINE user_pre_process
     IMPLICIT NONE
-    REAL(pr), DIMENSION(nwlt) :: h_star, phi, psi, temp, k_0, c_p
-    REAL(pr), DIMENSION(nwlt) :: Dphi, Dpsi, Dtemp, Dk_0, Dc_p
+    REAL(pr), DIMENSION(nwlt) :: h, h_star, phi, psi, temp
+    REAL(pr), DIMENSION(nwlt) :: Dphi, Dpsi, Dtemp
     REAL(pr), DIMENSION(nwlt,ne) :: for_du
     REAL(pr), DIMENSION(ne,nwlt,dim) :: du, du_dummy
     INTEGER, PARAMETER :: meth = 1
 
-    h_star = enthalpy_star(u(:,n_var_enthalpy))
-    phi = liquid_fraction(u(:,n_var_enthalpy))
+    h = u(:,n_var_enthalpy)
+    h_star = enthalpy_star(h)
+    phi = liquid_fraction(h)
     psi = porosity(u(:,n_var_porosity), phi)
-    temp = temperature(u(:,n_var_enthalpy))
-    k_0 = conductivity(temp, phi)
-    c_p = capacity(temp, phi)
+    temp = temperature(h)
 
-    Dphi = liquid_fraction(u(:,n_var_enthalpy), 1)
+    Dphi = liquid_fraction(h, 1)
     Dpsi = porosity(u(:,n_var_porosity), phi, Dphi)
-    Dtemp = temperature(u(:,n_var_enthalpy), temp)
-    Dk_0 = conductivity(temp, phi, 1)*Dphi + conductivity(temp, phi, 2)*Dtemp
-    Dc_p = capacity(temp, phi, 1)*Dphi + capacity(temp, phi, 2)*Dtemp
 
     ! quantities used in RHS and DRHS
-    CALL reallocate_scalar(diffusivity_prev); diffusivity_prev = k_0 / c_p * porosity_term(psi)
-    CALL reallocate_scalar(Ddiffusivity_prev); Ddiffusivity_prev = &
-      (Dk_0*c_p - Dc_p*k_0) / c_p**2 * porosity_term(psi) + k_0 / c_p * porosity_term(psi, 1)*Dpsi
-    CALL reallocate_scalar(Dh_star_prev); Dh_star_prev = enthalpy_star(u(:,n_var_enthalpy), 1)
+    CALL reallocate_scalar(diffusivity_prev); diffusivity_prev = diffusivity(h, psi)
+    CALL reallocate_scalar(Ddiffusivity_prev); Ddiffusivity_prev = diffusivity(h, psi, Dpsi)
+    CALL reallocate_scalar(Dh_star_prev); Dh_star_prev = enthalpy_star(h, 1)
 
     ! quantities used in algebraic BC
-    CALL reallocate_scalar(enthalpy_prev); enthalpy_prev = u(:,n_var_enthalpy)
+    CALL reallocate_scalar(enthalpy_prev); enthalpy_prev = h
     CALL reallocate_scalar(temp_prev); temp_prev = temp
-    CALL reallocate_scalar(Dtemp_prev); Dtemp_prev = Dtemp
+    CALL reallocate_scalar(Dtemp_prev); Dtemp_prev = temperature(h, temp)
     CALL reallocate_scalar(psi_prev); psi_prev = psi
 
     ! NB: here, ng is not equal to nwlt
     for_du = RESHAPE((/ h_star /), SHAPE(for_du))
     CALL c_diff_fast(for_du, du, du_dummy, j_lev, nwlt, meth, 10, ne, 1, ne)
-    CALL reallocate_vector(diff_h_star_prev); diff_h_star_prev = du(1,:,:)
+    CALL reallocate_vector(grad_h_star_prev); grad_h_star_prev = du(1,:,:)
   END SUBROUTINE user_pre_process
 
   SUBROUTINE user_post_process
@@ -766,18 +761,31 @@ CONTAINS
     END IF
   END FUNCTION porosity
 
-  ELEMENTAL FUNCTION porosity_term (psi, is_D)
+  ELEMENTAL FUNCTION diffusivity (enthalpy, psi, Dpsi)
     IMPLICIT NONE
-    REAL(pr),          INTENT(IN) :: psi
-    INTEGER, OPTIONAL, INTENT(IN) :: is_D
-    REAL(pr) :: porosity_term
+    REAL(pr),           INTENT(IN) :: enthalpy, psi
+    REAL(pr), OPTIONAL, INTENT(IN) :: Dpsi
+    REAL(pr) :: diffusivity, phi, temp, k_0, c_p, pterm
+    REAL(pr) :: Dphi, Dtemp, Dk_0, Dc_p, Dpterm
 
-    IF (.NOT.PRESENT(is_D)) THEN
-      porosity_term = (1.0_pr - psi) / (1.0_pr - initial_porosity)
+    phi = liquid_fraction(enthalpy)
+    temp = temperature(enthalpy)
+    k_0 = conductivity(temp, phi)
+    c_p = capacity(temp, phi)
+
+    Dphi = liquid_fraction(enthalpy, 1)
+    Dtemp = temperature(enthalpy, temp)
+    Dk_0 = conductivity(temp, phi, 1)*Dphi + conductivity(temp, phi, 2)*Dtemp
+    Dc_p = capacity(temp, phi, 1)*Dphi + capacity(temp, phi, 2)*Dtemp
+
+    IF (.NOT.PRESENT(Dpsi)) THEN
+      pterm = (1.0_pr - psi) / (1.0_pr - initial_porosity)
+      diffusivity = k_0 / c_p * pterm
     ELSE
-      porosity_term = -1.0_pr / (1.0_pr - initial_porosity)
+      Dpterm = -Dpsi / (1.0_pr - initial_porosity)
+      diffusivity = (Dk_0*c_p - Dc_p*k_0) / c_p**2 * pterm + k_0 / c_p * Dpterm
     END IF
-  END FUNCTION porosity_term
+  END FUNCTION diffusivity
 
   ELEMENTAL FUNCTION conductivity (temp, phi, is_D)
     IMPLICIT NONE
@@ -872,15 +880,15 @@ CONTAINS
     END IF
   END FUNCTION enthalpy_star
 
-  ELEMENTAL FUNCTION Neumann_bc (enthalpy, porosity)
+  ELEMENTAL FUNCTION Neumann_bc (enthalpy, psi)
     IMPLICIT NONE
-    REAL(pr), INTENT(IN) :: enthalpy, porosity
+    REAL(pr), INTENT(IN) :: enthalpy, psi
     REAL(pr) :: Neumann_bc, temp, phi, Dh_star
 
     temp = temperature(enthalpy)
     phi = liquid_fraction(enthalpy)
     Dh_star = enthalpy_star(enthalpy, 1)
-    Neumann_bc = (1.0_pr - porosity) * conductivity(temp, phi) / capacity(temp, phi) * Dh_star
+    Neumann_bc = (1.0_pr - psi) * conductivity(temp, phi) / capacity(temp, phi) * Dh_star
   END FUNCTION Neumann_bc
 
   ELEMENTAL FUNCTION Dirichlet_bc (enthalpy)

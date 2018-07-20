@@ -16,7 +16,7 @@ dimension = 2
 
 ### Start options
 file_gen = 'res.'
-IC_restart_mode     = 0                     # 0: normal, 1: hard restart, 2: soft restart, 3: from IC
+IC_restart_mode     = 0                     # 0 - normal, 1 - hard restart, 2 - soft restart, 3 - from IC
 IC_filename         = 'ic/res.0050.com.res'
 IC_restart_station  = 1                     # restart file number to use (NOT iteration!)
 IC_file_fmt         = 0                     # IC data file format (0 - native restart file, 1 - netcdf, 2 - A.Wray in fourier space, 3 - simple binary)
@@ -28,8 +28,8 @@ verb_level          = 1                     # Verbose level (bitwise flag): 1(00
 debug_level         = 0                     # Debug level (bitwise flag): 0(000) - default, 7(111) - most detailed
 
 ### Wavelet thresholding filter
-eps_init        = 1.0e-3                    # EPS used to adapt initial grid
-eps_run         = 1.0e-3                    # EPS used in run
+eps_init        = 0.5e-3                    # EPS used to adapt initial grid
+eps_run         = 5.0e-3                    # EPS used in run
 eps_adapt_steps = 1                         # How many time steps to adapt from eps_init to eps_run
 
 ### Wavelet levels
@@ -65,7 +65,7 @@ IMEXtype                = 9                 # 1=(111)L, 2=(121)L, 3=(122)A(1.0),
                                             # (srp) => s=# of implicit steps, r=# of explicit steps, p=order of IMEX method
                                             # A = A-stable method (R_inf follows in parentheses); L = L-stable method (R_inf = 0)
 t_begin = 0
-t_end   = 30
+t_end   = 25
 dt      = 2e-2
 dtmax   = 1
 dtmin   = 1e-7                              # If dt < dtmin then exection stops(likely blowing up)
@@ -154,5 +154,5 @@ initial_laser_position = 0, 0, 0            # starting point of the center of th
 smoothing_method = 1                        # 0 - piecewise C^0, 1 - hyperbolic tangent C^\infty
 smoothing_factor = 10                       # fusion_delta = fusion_delta*smoothing_factor
 eps_zero = 1e-12                            # approximation of zero
-porosity_scale = 10                         # scale factor for mesh adaptation
+diffusivity_scale = 1                       # scale factor for mesh adaptation
 power_factor_2d = 0.3                       # laser power factor for the 2D problem
