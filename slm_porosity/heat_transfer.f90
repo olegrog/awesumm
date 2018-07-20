@@ -94,7 +94,7 @@ CONTAINS
 
     CALL register_var('enthalpy',         integrated=t, adapt=ff, saved=t, interpolate=ff, exact=ff, req_restart=t)
     CALL register_var('porosity',         integrated=f, adapt=tt, saved=t, interpolate=ff, exact=ff, req_restart=f)
-    CALL register_var('enthalpy_star',    integrated=f, adapt=tt, saved=f, interpolate=ff, exact=ff, req_restart=f)
+    CALL register_var('enthalpy_star',    integrated=f, adapt=tt, saved=t, interpolate=ff, exact=ff, req_restart=f)
     CALL register_var('liquid_fraction',  integrated=f, adapt=ff, saved=t, interpolate=ff, exact=ff, req_restart=f)
     CALL register_var('temperature',      integrated=f, adapt=ff, saved=t, interpolate=ff, exact=ff, req_restart=f)
     CALL register_var('pressure',         integrated=f, adapt=ff, saved=f, interpolate=ff, exact=ff, req_restart=f)
@@ -166,7 +166,7 @@ CONTAINS
       depth = x_center(:,dim) - x(:,dim)
       temp = initial_temp*EXP(-SUM((x_surface-x_center)**2, 2)/initial_pool_radius**2)
       phi = lf_from_temperature(temp)
-      psi = porosity(phi, SPREAD(initial_porosity, 1, nlocal))
+      psi = porosity(SPREAD(initial_porosity, 1, nlocal), phi)
       k_0 = conductivity(temp, phi)
       lambda = laser_heat_flux(x_surface, nlocal, 1.0_pr - initial_pool_radius**-2) / &
         (initial_temp * k_0 * (1.0_pr - psi))
@@ -558,7 +558,7 @@ CONTAINS
     ! calculate the interpolated variables only
     u(:,n_var_temp) = temperature(u(:,n_var_enthalpy))
     u(:,n_var_lfrac) = liquid_fraction(u(:,n_var_enthalpy))
-    u(:,n_var_porosity) = porosity(u(:,n_var_lfrac), u(:,n_var_porosity))
+    u(:,n_var_porosity) = porosity(u(:,n_var_porosity), u(:,n_var_lfrac))
     u(:,n_var_h_star) = u(:,n_var_enthalpy) - fusion_heat*u(:,n_var_lfrac)
   END SUBROUTINE user_additional_vars
 
@@ -656,27 +656,30 @@ CONTAINS
   SUBROUTINE user_pre_process
     IMPLICIT NONE
     REAL(pr), DIMENSION(nwlt) :: h_star, phi, psi, temp, k_0, c_p
-    REAL(pr), DIMENSION(nwlt) :: Dphi, Dtemp, Dk_0, Dc_p
+    REAL(pr), DIMENSION(nwlt) :: Dphi, Dpsi, Dtemp, Dk_0, Dc_p
     REAL(pr), DIMENSION(nwlt,ne) :: for_du
     REAL(pr), DIMENSION(ne,nwlt,dim) :: du, du_dummy
     INTEGER, PARAMETER :: meth = 1
 
     h_star = enthalpy_star(u(:,n_var_enthalpy))
     phi = liquid_fraction(u(:,n_var_enthalpy))
-    psi = porosity(phi, u(:,n_var_porosity))
+    psi = porosity(u(:,n_var_porosity), phi)
     temp = temperature(u(:,n_var_enthalpy))
     k_0 = conductivity(temp, phi)
     c_p = capacity(temp, phi)
 
     Dphi = liquid_fraction(u(:,n_var_enthalpy), 1)
+    Dpsi = porosity(u(:,n_var_porosity), phi, Dphi)
     Dtemp = temperature(u(:,n_var_enthalpy), temp)
     Dk_0 = conductivity(temp, phi, 1)*Dphi + conductivity(temp, phi, 2)*Dtemp
     Dc_p = capacity(temp, phi, 1)*Dphi + capacity(temp, phi, 2)*Dtemp
 
     ! quantities used in RHS and DRHS
     CALL reallocate_scalar(diffusivity_prev); diffusivity_prev = k_0 / c_p * porosity_term(psi)
-    CALL reallocate_scalar(Ddiffusivity_prev); Ddiffusivity_prev = (Dk_0*c_p - Dc_p*k_0) / c_p**2 * porosity_term(psi)
+    CALL reallocate_scalar(Ddiffusivity_prev); Ddiffusivity_prev = &
+      (Dk_0*c_p - Dc_p*k_0) / c_p**2 * porosity_term(psi) + k_0 / c_p * porosity_term(psi, 1)*Dpsi
     CALL reallocate_scalar(Dh_star_prev); Dh_star_prev = enthalpy_star(u(:,n_var_enthalpy), 1)
+
     ! quantities used in algebraic BC
     CALL reallocate_scalar(enthalpy_prev); enthalpy_prev = u(:,n_var_enthalpy)
     CALL reallocate_scalar(temp_prev); temp_prev = temp
@@ -746,18 +749,34 @@ CONTAINS
     END IF
   END FUNCTION lf_exponent
 
-  ELEMENTAL FUNCTION porosity (liquid_fraction, previous)
+  ! return Dporosity if the third argument is provided
+  ELEMENTAL FUNCTION porosity (previous, phi, Dphi)
     IMPLICIT NONE
-    REAL(pr), INTENT(IN) :: liquid_fraction, previous
+    REAL(pr),           INTENT(IN) :: previous, phi
+    REAL(pr), OPTIONAL, INTENT(IN) :: Dphi
     REAL(pr) :: porosity
-    porosity = MAX(0.0_pr, MIN(previous, initial_porosity*(1.0_pr - liquid_fraction)))
+
+    porosity = MAX(0.0_pr, MIN(previous, initial_porosity*(1.0_pr - phi)))
+    IF (PRESENT(Dphi)) THEN
+      IF (porosity.LT.previous) THEN
+        porosity = -initial_porosity*Dphi
+      ELSE
+        porosity = 0.0_pr
+      END IF
+    END IF
   END FUNCTION porosity
 
-  ELEMENTAL FUNCTION porosity_term (porosity)
+  ELEMENTAL FUNCTION porosity_term (psi, is_D)
     IMPLICIT NONE
-    REAL(pr), INTENT(IN) :: porosity
+    REAL(pr),          INTENT(IN) :: psi
+    INTEGER, OPTIONAL, INTENT(IN) :: is_D
     REAL(pr) :: porosity_term
-    porosity_term = (1.0_pr - porosity) / (1.0_pr - initial_porosity)
+
+    IF (.NOT.PRESENT(is_D)) THEN
+      porosity_term = (1.0_pr - psi) / (1.0_pr - initial_porosity)
+    ELSE
+      porosity_term = -1.0_pr / (1.0_pr - initial_porosity)
+    END IF
   END FUNCTION porosity_term
 
   ELEMENTAL FUNCTION conductivity (temp, phi, is_D)
