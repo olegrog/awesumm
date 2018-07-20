@@ -328,7 +328,7 @@ CONTAINS
       CALL c_diff_fast(pert_h_star, du, du_dummy, j_lev, ng, meth, 10, ne, 1, ne)
       diff_pert_h_star = du(ie,:,:)
       for_du = &
-        diff_h_star_prev * SPREAD(Ddiffusivity_prev * pert_h_star, 2, dim) + &
+        diff_h_star_prev * SPREAD(Ddiffusivity_prev * pert_u(:,ie), 2, dim) + &
         diff_pert_h_star * SPREAD(diffusivity_prev, 2, dim)
       CALL c_diff_fast(for_du, d2u, d2u_dummy, j_lev, ng, meth, 10, dim, 1, dim)
       DO i = 1, dim
