@@ -20,8 +20,17 @@ MODULE user_case
   USE input_file_reader
   USE debug_vars
   !
-  ! case specific variables
+  ! Style guide for the following user case:
+  !   1) use long names for global variables (two or more words) and short names for local ones
+  !   2) use ELEMENTAL and PURE function wherever possible
+  !   3) avoid code duplication completely as much as possible
+  !   4) write 'IMPLICIT NONE' in all functions and subroutines
+  !   5) avoid lines more than 120 symbols
+  !   6) align column and comments
+  !   7) prefer obvious names, otherwise add comments
+  !   8) prefer intermediate local variables and functions
   !
+  ! case specific variables
   INTEGER n_var_enthalpy
   INTEGER n_var_porosity
   INTEGER n_var_diffus
@@ -30,10 +39,10 @@ MODULE user_case
   INTEGER n_var_pressure
 
   ! quantities used in RHS, DRHS, and algebraic BC
-  REAL(pr), DIMENSION(:), ALLOCATABLE :: diffusivity_prev, Ddiffusivity_prev, Dh_star_prev
+  REAL(pr), DIMENSION(:),   ALLOCATABLE :: diffusivity_prev, Ddiffusivity_prev, Dh_star_prev
   REAL(pr), DIMENSION(:,:), ALLOCATABLE :: grad_h_star_prev
-  REAL(pr), DIMENSION(:), ALLOCATABLE :: enthalpy_prev, temp_prev, Dtemp_prev, psi_prev
-  INTEGER, DIMENSION(:), ALLOCATABLE :: i_p_face
+  REAL(pr), DIMENSION(:),   ALLOCATABLE :: enthalpy_prev, temp_prev, Dtemp_prev, psi_prev
+  INTEGER,  DIMENSION(:),   ALLOCATABLE :: i_p_face
 
   ! thermophysical properties
   REAL(pr) :: Dconductivity_solid
@@ -60,10 +69,10 @@ MODULE user_case
   ! initial conditions
   REAL(pr) :: initial_temp
   REAL(pr) :: initial_pool_radius
-  REAL(pr), DIMENSION(3) :: initial_laser_position
+  REAL(pr) :: initial_laser_position(3)
 
   ! numerics-specific parameters
-  INTEGER smoothing_method
+  INTEGER  :: smoothing_method
   REAL(pr) :: smoothing_factor
   REAL(pr) :: eps_zero
   REAL(pr) :: diffusivity_scale
@@ -79,8 +88,8 @@ CONTAINS
   !
   ! The following variables must be setup in this routine:
   !
-  ! n_integrated     ! first n_integrated eqns will be acted on for time integration
-  ! n_var_additional ! interpolated variables (adapted and saved are automatically included)
+  ! n_integrated     - first n_integrated eqns will be acted on for time integration
+  ! n_var_additional - interpolated variables (adapted and saved are automatically included)
   ! n_var
   !
   SUBROUTINE user_setup_pde (verb)
@@ -135,12 +144,12 @@ CONTAINS
   !
   ! Set the exact solution for comparison to the simulated solution
   !
-  ! u          - array to fill in the exact solution
-  ! nlocal       - number of active wavelets
-  ! ne_local        - total number of equations
-  ! t          - time of current time step
-  ! l_n_var_exact_soln_index - index into the elements of u for which we need to
-  !                            find the exact solution
+  ! u                        - array to fill in the exact solution
+  ! nlocal                   - number of active wavelets
+  ! ne_local                 - total number of equations
+  ! t                        - time of current time step
+  ! l_n_var_exact_soln_index - index into the elements of u for which we need to find the exact solution
+  !
   SUBROUTINE user_exact_soln (u, nlocal, t_local, l_n_var_exact_soln)
     IMPLICIT NONE
     REAL(pr), INTENT(INOUT) :: u(nlocal,n_var_exact)
@@ -175,9 +184,9 @@ CONTAINS
   END SUBROUTINE user_initial_conditions
 
   !
-  ! u_in      - fields on the adaptive grid
-  ! nlocal    - number of active points
-  ! ne_local  - number of equations
+  ! u_in     - fields on the adaptive grid
+  ! nlocal   - number of active points
+  ! ne_local - number of equations
   !
   SUBROUTINE user_algebraic_BC (Lu, u_in, nlocal, ne_local, jlev, meth)
     IMPLICIT NONE
@@ -271,8 +280,10 @@ CONTAINS
     END DO
   END SUBROUTINE user_algebraic_BC_rhs
 
+  !
+  ! To make u divergence free
+  !
   SUBROUTINE user_project (u, p, nlocal, meth)
-    !--Makes u divergence free
     IMPLICIT NONE
     REAL(pr), INTENT(INOUT) :: u(nlocal,n_integrated), p(nlocal)
     INTEGER,  INTENT(IN) :: nlocal, meth
@@ -444,8 +455,10 @@ CONTAINS
     END IF
   END SUBROUTINE user_stats
 
+  !
+  ! Calculate drag and lift on obstacle using penalization formula
+  !
   SUBROUTINE user_cal_force (u, n, t_local, force, drag, lift)
-    !--Calculates drag and lift on obstacle using penalization formula
     IMPLICIT NONE
     REAL(pr), INTENT(IN) :: u(n,dim)
     INTEGER,  INTENT(IN) :: n
@@ -539,17 +552,16 @@ CONTAINS
   END SUBROUTINE user_read_input
 
   !
-  ! calculate any additional variables
+  ! Calculate any additional variables
   !
-  ! arg
-  ! flag - 0 calledwhile adapting to IC, 1 - called in main time integration loop
+  ! flag: 0 - called while adapting to IC, 1 - called in main time integration loop
   !
   ! These additional variables are calculated and left in real space.
   !
   SUBROUTINE user_additional_vars (t_local, flag)
     IMPLICIT NONE
     REAL(pr), INTENT(IN) :: t_local
-    INTEGER,  INTENT(IN) :: flag ! 0- called during adaption to IC, 1 called during main integration loop
+    INTEGER,  INTENT(IN) :: flag
 
     IF (.NOT.flag) THEN
       u(:,n_var_porosity) = initial_porosity
@@ -563,18 +575,17 @@ CONTAINS
   END SUBROUTINE user_additional_vars
 
   !
-  ! calculate any additional scalar variables
+  ! Calculate any additional scalar variables
   !
-  ! arg
-  ! flag - 0 calledwhile adapting to IC, 1 - called in main time integration loop
+  ! flag: 0 - called while adapting to IC, 1 - called in main time integration loop
   !
   SUBROUTINE user_scalar_vars (flag)
     IMPLICIT NONE
-    INTEGER, INTENT(IN) :: flag ! 0- called during adaption to IC, 1 called during main integration loop
+    INTEGER, INTENT(IN) :: flag
   END SUBROUTINE user_scalar_vars
 
   !
-  !************ Calculating Scales ***************************
+  ! Calculating Scales
   !
   ! Note the order of the components in the scl array
   ! correspond to u_tn, v_tn, w_tn, u_tn-1, v_tn-1, w_tn-1, u_tn-2, v_tn-2, w_tn-2
@@ -693,8 +704,8 @@ CONTAINS
 
   ELEMENTAL FUNCTION liquid_fraction (enthalpy, is_D)
     IMPLICIT NONE
-    REAL(pr),          INTENT(IN) :: enthalpy
-    INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL(pr), INTENT(IN) :: enthalpy
+    INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: liquid_fraction
 
     IF (smoothing_method.EQ.0) THEN         ! C^0
@@ -714,8 +725,8 @@ CONTAINS
 
   ELEMENTAL FUNCTION lf_piecewise (enthalpy, is_D)
     IMPLICIT NONE
-    REAL(pr),          INTENT(IN) :: enthalpy
-    INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL(pr), INTENT(IN) :: enthalpy
+    INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: lf_piecewise
 
     IF (.NOT.PRESENT(is_D)) THEN
@@ -731,8 +742,8 @@ CONTAINS
 
   ELEMENTAL FUNCTION lf_exponent (enthalpy, is_D)
     IMPLICIT NONE
-    REAL(pr),          INTENT(IN) :: enthalpy
-    INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL(pr), INTENT(IN) :: enthalpy
+    INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: lf_exponent
 
     lf_exponent = EXP(-4*Dphi_one*(enthalpy - enthalpy_one))
@@ -747,8 +758,8 @@ CONTAINS
   ! return Dporosity if the third argument is provided
   ELEMENTAL FUNCTION porosity (previous, phi, Dphi)
     IMPLICIT NONE
-    REAL(pr),           INTENT(IN) :: previous, phi
-    REAL(pr), OPTIONAL, INTENT(IN) :: Dphi
+    REAL(pr), INTENT(IN) :: previous, phi
+    REAL(pr), INTENT(IN), OPTIONAL :: Dphi
     REAL(pr) :: porosity
 
     porosity = MAX(0.0_pr, MIN(previous, initial_porosity*(1.0_pr - phi)))
@@ -763,8 +774,8 @@ CONTAINS
 
   ELEMENTAL FUNCTION diffusivity (enthalpy, psi, Dpsi)
     IMPLICIT NONE
-    REAL(pr),           INTENT(IN) :: enthalpy, psi
-    REAL(pr), OPTIONAL, INTENT(IN) :: Dpsi
+    REAL(pr), INTENT(IN) :: enthalpy, psi
+    REAL(pr), INTENT(IN), OPTIONAL :: Dpsi
     REAL(pr) :: diffusivity, phi, temp, k_0, c_p, pterm
     REAL(pr) :: Dphi, Dtemp, Dk_0, Dc_p, Dpterm
 
@@ -789,8 +800,8 @@ CONTAINS
 
   ELEMENTAL FUNCTION conductivity (temp, phi, is_D)
     IMPLICIT NONE
-    REAL(pr),          INTENT(IN) :: temp, phi
-    INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL(pr), INTENT(IN) :: temp, phi
+    INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: conductivity
 
     conductivity = three_parameter_model(temp, phi, &
@@ -799,8 +810,8 @@ CONTAINS
 
   ELEMENTAL FUNCTION capacity (temp, phi, is_D)
     IMPLICIT NONE
-    REAL(pr),          INTENT(IN) :: temp, phi
-    INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL(pr), INTENT(IN) :: temp, phi
+    INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: capacity
 
     capacity = three_parameter_model(temp, phi, &
@@ -810,8 +821,8 @@ CONTAINS
   ! is_D: 1 - partial derivative of liquid_fraction, 2 - partial derivative of temperature
   ELEMENTAL FUNCTION three_parameter_model (temp, phi, Dsolid, Dliquid, jump, is_D)
     IMPLICIT NONE
-    REAL(pr),          INTENT(IN) :: temp, phi, Dsolid, Dliquid, jump
-    INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL(pr), INTENT(IN) :: temp, phi, Dsolid, Dliquid, jump
+    INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: three_parameter_model
 
     IF (.NOT.PRESENT(is_D)) THEN
@@ -826,8 +837,8 @@ CONTAINS
   ! return Dtemperature if the second argument is provided
   ELEMENTAL FUNCTION temperature (enthalpy, temp)
     IMPLICIT NONE
-    REAL(pr),           INTENT(IN) :: enthalpy
-    REAL(pr), OPTIONAL, INTENT(IN) :: temp
+    REAL(pr), INTENT(IN) :: enthalpy
+    REAL(pr), INTENT(IN), OPTIONAL :: temp
     REAL(pr) :: temperature, h_star, phi, g1, g2, g3
     REAL(pr) :: Dh_star, Dphi, Dg1, Dg2, Dg3
 
@@ -869,8 +880,8 @@ CONTAINS
 
   ELEMENTAL FUNCTION enthalpy_star (enthalpy, is_D)
     IMPLICIT NONE
-    REAL(pr),          INTENT(IN) :: enthalpy
-    INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL(pr), INTENT(IN) :: enthalpy
+    INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: enthalpy_star
 
     IF (.NOT.PRESENT(is_D)) THEN
@@ -903,8 +914,8 @@ CONTAINS
 
   ELEMENTAL FUNCTION other_heat_flux (temp, is_D)
     IMPLICIT NONE
-    REAL(pr),          INTENT(IN) :: temp
-    INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL(pr), INTENT(IN) :: temp
+    INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: other_heat_flux
 
     IF (.NOT.PRESENT(is_D)) THEN
