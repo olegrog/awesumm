@@ -77,12 +77,30 @@ MODULE user_case
   REAL(pr) :: eps_zero
   REAL(pr) :: diffusivity_scale
   REAL(pr) :: power_factor_2d
+  REAL(pr) :: tol_newton
+  INTEGER  :: max_iter_newton
 
   ! derived quantities
   REAL(pr) :: enthalpy_S             ! temp=solidus,  phi=0
   REAL(pr) :: enthalpy_one           ! temp=1,        phi=1/2
   REAL(pr) :: enthalpy_L             ! temp=liquidus, phi=1
   REAL(pr) :: Dphi_one               ! maximum derivative of liquid fraction on enthalpy
+
+  ABSTRACT INTERFACE
+    ! NB: fortran prohibits creating pointers to elemental functions (only to pure),
+    !     but is possible to call a pure function from the elemental one
+    !     and it will be considered as elemental. Fortran's magic :)
+    PURE FUNCTION func_with_derivative(x, arg, is_D)
+      USE precision
+      IMPLICIT NONE
+      REAL(pr), INTENT (IN) :: x, arg
+      INTEGER,  INTENT (IN), OPTIONAL :: is_D
+      REAL(pr) :: func_with_derivative
+    END FUNCTION func_with_derivative
+  END INTERFACE
+
+  PROCEDURE(func_with_derivative), POINTER :: func_newton => null()
+
 CONTAINS
 
   !
@@ -516,6 +534,8 @@ CONTAINS
     call input_real ('eps_zero', eps_zero, 'stop')
     call input_real ('diffusivity_scale', diffusivity_scale, 'stop')
     call input_real ('power_factor_2d', power_factor_2d, 'stop')
+    call input_real ('tol_newton', tol_newton, 'stop')
+    call input_integer ('max_iter_newton', max_iter_newton, 'stop')
 
     ! calculate the real quantities
     enthalpy_S = enthalpy(1.0_pr - fusion_delta/2, 0.0_pr)
@@ -565,7 +585,11 @@ CONTAINS
 
     IF (.NOT.flag) THEN
       u(:,n_var_porosity) = initial_porosity
+      ! first, find the approximate initial condition
       u(:,n_var_enthalpy) = enthalpy(u(:,n_var_temp), lf_from_temperature(u(:,n_var_temp)))
+      ! second, update it by solving the corresponding equation
+      func_newton => enthalpy_equation
+      u(:,n_var_enthalpy) = find_root(u(:,n_var_enthalpy), u(:,n_var_temp))
     END IF
     ! calculate the interpolated variables only
     u(:,n_var_temp) = temperature(u(:,n_var_enthalpy))
@@ -868,15 +892,37 @@ CONTAINS
     END IF
   END FUNCTION temperature
 
-  ELEMENTAL FUNCTION enthalpy (temp, phi)
+  ! return Denthalpy if the third argument is provided
+  ELEMENTAL FUNCTION enthalpy (temp, phi, Dphi)
     IMPLICIT NONE
     REAL(pr), INTENT(IN) :: temp, phi
-    REAL(pr) :: enthalpy
+    REAL(pr),  INTENT(IN), OPTIONAL :: Dphi
+    REAL(pr) :: enthalpy, before_phi
 
-    enthalpy = temp + Dcapacity_solid/2*temp**2 + phi*(fusion_heat + &
-      (Dcapacity_solid - Dcapacity_liquid + capacity_fusion)*(temp - 1.0_pr) + &
-      (Dcapacity_liquid - Dcapacity_solid)/2*(temp**2 - 1.0_pr))
+    before_phi = (fusion_heat + &
+        (Dcapacity_solid - Dcapacity_liquid + capacity_fusion)*(temp - 1.0_pr) + &
+        (Dcapacity_liquid - Dcapacity_solid)/2*(temp**2 - 1.0_pr))
+    IF (.NOT.PRESENT(Dphi)) THEN
+      enthalpy = temp + Dcapacity_solid/2*temp**2 + before_phi*phi
+    ELSE
+      enthalpy = before_phi*Dphi
+    END IF
   END FUNCTION enthalpy
+
+  PURE FUNCTION enthalpy_equation (h, temp, is_D)
+    IMPLICIT NONE
+    REAL(pr), INTENT(IN) :: h, temp
+    INTEGER,  INTENT(IN), OPTIONAL :: is_D
+    REAL(pr) :: enthalpy_equation, phi, Dphi
+
+    phi = liquid_fraction(h)
+    Dphi = liquid_fraction(h, 1)
+    IF (.NOT.PRESENT(is_D)) THEN
+      enthalpy_equation = h - enthalpy(temp, phi)
+    ELSE
+      enthalpy_equation = 1.0_pr - enthalpy(temp, phi, Dphi)
+    END IF
+  END FUNCTION enthalpy_equation
 
   ELEMENTAL FUNCTION enthalpy_star (enthalpy, is_D)
     IMPLICIT NONE
@@ -985,5 +1031,29 @@ CONTAINS
     CALL parallel_global_sum(REALMAXVAL=domain_bound)
     domain_bound = sgn*domain_bound
   END FUNCTION domain_bound
+
+  !
+  ! Find root of equation using the Newton algorithm
+  !
+  ! NB: Dummy procedures are not allowed as arguments in elemental functions,
+  !     but can be transfered to them as pointers to pure functions!
+  !
+  ! func_newton - global pointer to function with its derivative
+  ! x0          - initial guess
+  ! arg         - additional argument for func_newton
+  ELEMENTAL FUNCTION find_root (x0, arg) RESULT(x)
+    IMPLICIT NONE
+    REAL(pr), INTENT(IN) :: x0, arg
+    REAL(pr) :: x, f
+    INTEGER  :: i
+    i = 0
+    x = x0
+    f = func_newton(x0, arg)
+    DO WHILE(ABS(f).GT.tol_newton .AND. i.LT.max_iter_newton)
+      x = x - f/func_newton(x, arg, 1)
+      f = func_newton(x, arg)
+      i = i + 1
+    END DO
+  END FUNCTION find_root
 
 END MODULE user_case

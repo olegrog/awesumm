@@ -28,7 +28,7 @@ verb_level          = 1                     # Verbose level (bitwise flag): 1(00
 debug_level         = 0                     # Debug level (bitwise flag): 0(000) - default, 7(111) - most detailed
 
 ### Wavelet thresholding filter
-eps_init        = 0.5e-3                    # EPS used to adapt initial grid
+eps_init        = 1.0e-3                    # EPS used to adapt initial grid
 eps_run         = 5.0e-3                    # EPS used in run
 eps_adapt_steps = 1                         # How many time steps to adapt from eps_init to eps_run
 
@@ -156,3 +156,5 @@ smoothing_factor = 10                       # fusion_delta = fusion_delta*smooth
 eps_zero = 1e-12                            # approximation of zero
 diffusivity_scale = 1                       # scale factor for mesh adaptation
 power_factor_2d = 0.3                       # laser power factor for the 2D problem
+tol_newton = 1e-6                           # tolerance for root finding algorithm
+max_iter_newton = 100                       # maximum number of iterations for root finding algorithm
