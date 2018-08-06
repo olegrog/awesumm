@@ -70,10 +70,12 @@ MODULE user_case
   REAL(pr) :: initial_temp
   REAL(pr) :: initial_pool_radius
   REAL(pr) :: initial_laser_position(3)
+  REAL(pr) :: powder_depth
 
   ! numerics-specific parameters
   INTEGER  :: smoothing_method
-  REAL(pr) :: smoothing_factor
+  REAL(pr) :: fusion_smoothing
+  REAL(pr) :: powder_smoothing
   REAL(pr) :: eps_zero
   REAL(pr) :: diffusivity_scale
   REAL(pr) :: power_factor_2d
@@ -527,10 +529,12 @@ CONTAINS
     call input_real ('initial_temp', initial_temp, 'stop')
     call input_real ('initial_pool_radius', initial_pool_radius, 'stop')
     call input_real_vector ('initial_laser_position', initial_laser_position, 3, 'stop')
+    call input_real ('powder_depth', powder_depth, 'stop')
 
     ! numerics-specific parameters
     call input_integer ('smoothing_method', smoothing_method, 'stop')
-    call input_real ('smoothing_factor', smoothing_factor, 'stop')
+    call input_real ('fusion_smoothing', fusion_smoothing, 'stop')
+    call input_real ('powder_smoothing', powder_smoothing, 'stop')
     call input_real ('eps_zero', eps_zero, 'stop')
     call input_real ('diffusivity_scale', diffusivity_scale, 'stop')
     call input_real ('power_factor_2d', power_factor_2d, 'stop')
@@ -550,7 +554,7 @@ CONTAINS
     END IF
 
     ! smooth solid-liquid interface
-    fusion_delta = fusion_delta*smoothing_factor
+    fusion_delta = fusion_delta*fusion_smoothing
 
     ! calculate the derived quantities
     enthalpy_S = enthalpy(1.0_pr - fusion_delta/2, 0.0_pr)
@@ -582,9 +586,11 @@ CONTAINS
     IMPLICIT NONE
     REAL(pr), INTENT(IN) :: t_local
     INTEGER,  INTENT(IN) :: flag
+    REAL(pr) :: depth(nwlt)
 
     IF (.NOT.flag) THEN
-      u(:,n_var_porosity) = initial_porosity
+      depth = xyzlimits(2,dim) - x(:,dim)
+      u(:,n_var_porosity) = initial_porosity/(1.0_pr + EXP(-4*(powder_depth - depth)/powder_smoothing))
       ! first, find the approximate initial condition
       u(:,n_var_enthalpy) = enthalpy(u(:,n_var_temp), lf_from_temperature(u(:,n_var_temp)))
       ! second, update it by solving the corresponding equation

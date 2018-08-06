@@ -28,7 +28,7 @@ verb_level          = 1                     # Verbose level (bitwise flag): 1(00
 debug_level         = 0                     # Debug level (bitwise flag): 0(000) - default, 7(111) - most detailed
 
 ### Wavelet thresholding filter
-eps_init        = 1.0e-3                    # EPS used to adapt initial grid
+eps_init        = 5.0e-3                    # EPS used to adapt initial grid
 eps_run         = 5.0e-3                    # EPS used in run
 eps_adapt_steps = 1                         # How many time steps to adapt from eps_init to eps_run
 
@@ -38,7 +38,7 @@ j_lev_init = 2                              # starts adapting IC by having all t
 j_IC       = 20                             # used if the IC data does not have dimensions in it then mxyz(:)*2^(j_IC-1) is used
 J_FILT     = 20
 J_MN       = 2
-J_MX       = 10
+J_MX       = 8
 
 ### Computational domain
 coord_min      = -5.0,    0.0,   -5.0       # XMIN, YMIN, ZMIN, etc
@@ -149,10 +149,12 @@ emissivity = 0.7
 initial_temp = 1.8
 initial_pool_radius = 1.8
 initial_laser_position = 0, 0, 0            # starting point of the center of the laser beam
+powder_depth = 1.0
 
 # numerics-specific parameters
 smoothing_method = 1                        # 0 - piecewise C^0, 1 - hyperbolic tangent C^\infty
-smoothing_factor = 10                       # fusion_delta = fusion_delta*smoothing_factor
+fusion_smoothing = 2                        # fusion_delta = fusion_delta*fusion_smoothing
+powder_smoothing = 0.4                      # factor for smoothing the powder bed
 eps_zero = 1e-12                            # approximation of zero
 diffusivity_scale = 1                       # scale factor for mesh adaptation
 power_factor_2d = 0.3                       # laser power factor for the 2D problem
