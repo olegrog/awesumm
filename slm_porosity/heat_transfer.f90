@@ -643,12 +643,19 @@ CONTAINS
     LOGICAL,  INTENT(INOUT) :: use_default
     REAL(pr), INTENT(IN)    :: u(nwlt,n_integrated)
     REAL(pr), INTENT(INOUT) :: cfl_out
-    REAL(pr) :: h_arr(dim,nwlt)
+    REAL(pr) :: h_arr(dim,nwlt), cfl_laser, cfl_diffusive
 
     use_default = .FALSE.
     CALL get_all_local_h (h_arr)
-    cfl_out = MAXVAL(dt/h_arr(1,:)*scanning_speed)
-    CALL parallel_global_sum(REALMAXVAL=cfl_out)
+    cfl_laser = MAXVAL(dt/h_arr(1,:)*scanning_speed)
+    cfl_diffusive = MAXVAL(dt/h_arr(1,:)**2/diffusivity_prev) / (1.0_pr - fusion_heat*Dphi_one)
+    CALL parallel_global_sum(REALMAXVAL=cfl_laser)
+    CALL parallel_global_sum(REALMAXVAL=cfl_diffusive)
+    cfl_out = cfl_laser
+    IF (time_integration_method == TIME_INT_RK) cfl_out = MAX(cfl_out, cfl_diffusive)
+    IF (par_rank.EQ.0) THEN
+      PRINT *, 'CFL_laser =', cfl_laser, 'CFL_diffusive =', cfl_diffusive
+    END IF
     IF (u(1,1).NE.u(1,1)) THEN
       PRINT *, '--- INFINITE ---'
       CALL ABORT
