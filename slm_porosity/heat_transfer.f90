@@ -77,7 +77,7 @@ MODULE user_case
   REAL(pr) :: fusion_smoothing
   REAL(pr) :: powder_smoothing
   REAL(pr) :: eps_zero
-  REAL(pr) :: diffusivity_scale
+  REAL(pr) :: lfrac_scale
   REAL(pr) :: power_factor_2d
   REAL(pr) :: tol_newton
   INTEGER  :: max_iter_newton
@@ -121,10 +121,14 @@ CONTAINS
       ff = (/.FALSE.,.FALSE./), ft = (/.FALSE.,.TRUE./), tf = (/.TRUE.,.FALSE./), tt = (/.TRUE.,.TRUE./)
     INTEGER :: i
 
+    ! Adapt mesh to
+    ! 1) diffusivity as the driven nonlinearity,
+    ! 2) liquid_fraction for the BC,
+    ! 3) temperature for the case of constant thermophysical properties.
     CALL register_var('enthalpy',         integrated=t, adapt=ff, saved=t, interpolate=ff, exact=ff, req_restart=t)
     CALL register_var('porosity',         integrated=f, adapt=ff, saved=t, interpolate=ff, exact=ff, req_restart=f)
     CALL register_var('diffusivity',      integrated=f, adapt=tt, saved=t, interpolate=ff, exact=ff, req_restart=f)
-    CALL register_var('liquid_fraction',  integrated=f, adapt=ff, saved=t, interpolate=ff, exact=ff, req_restart=f)
+    CALL register_var('liquid_fraction',  integrated=f, adapt=tt, saved=t, interpolate=ff, exact=ff, req_restart=f)
     CALL register_var('temperature',      integrated=f, adapt=ft, saved=t, interpolate=ff, exact=ff, req_restart=f)
     CALL register_var('pressure',         integrated=f, adapt=ff, saved=f, interpolate=ff, exact=ff, req_restart=f)
 
@@ -147,7 +151,7 @@ CONTAINS
     ALLOCATE(Umn(n_var))
     Umn = 0.0_pr !set up here if mean quantities are not zero and used in scales or equation
     scaleCoeff = 1.0_pr
-    scaleCoeff(n_var_diffus) = diffusivity_scale
+    scaleCoeff(n_var_lfrac) = lfrac_scale
 
     IF (verb_level.GT.0) THEN
       PRINT *, 'n_integrated = ', n_integrated
@@ -217,7 +221,7 @@ CONTAINS
     REAL(pr), DIMENSION(ne_local,nlocal,dim) :: du, d2u
     INTEGER :: face(dim), iloc(nwlt)
 
-    CALL c_diff_fast (u_in, du, d2u, jlev, nlocal, meth, 10, ne_local, 1, ne_local)
+    CALL c_diff_fast (u_in, du, d2u, jlev, nlocal, grad_meth(meth), 10, ne_local, 1, ne_local)
 
     DO ie = 1, ne_local
       shift = nlocal*(ie-1)
@@ -249,7 +253,7 @@ CONTAINS
     REAL(pr), DIMENSION(nlocal,dim) :: du, d2u
     INTEGER :: face(dim), iloc(nwlt)
 
-    CALL c_diff_diag (du, d2u, jlev, nlocal, meth, meth, 10)
+    CALL c_diff_diag (du, d2u, jlev, nlocal, grad_meth(meth), div_meth(meth), -10)
 
     DO ie = 1, ne_local
       shift = nlocal*(ie-1)
@@ -328,7 +332,7 @@ CONTAINS
 
     IF (IMEXswitch.GE.0) THEN
       for_du = grad_h_star_prev * SPREAD(diffusivity_prev, 2, dim)
-      CALL c_diff_fast(for_du, d2u, d2u_dummy, j_lev, ng, meth, 10, dim, 1, dim)
+      CALL c_diff_fast(for_du, d2u, d2u_dummy, j_lev, ng, div_meth(meth), 10, dim, 1, dim)
       DO i = 1, dim
         user_rhs(shift+1:shift+ng) = user_rhs(shift+1:shift+ng) + d2u(i,:,i)
       END DO
@@ -356,12 +360,12 @@ CONTAINS
 
     IF (IMEXswitch.GE.0) THEN
       pert_h_star = Dh_star_prev*pert_u(:,ie)
-      CALL c_diff_fast(pert_h_star, du, du_dummy, j_lev, ng, meth, 10, ne, 1, ne)
+      CALL c_diff_fast(pert_h_star, du, du_dummy, j_lev, ng, grad_meth(meth), 10, ne, 1, ne)
       diff_pert_h_star = du(ie,:,:)
       for_du = &
         grad_h_star_prev * SPREAD(Ddiffusivity_prev * pert_u(:,ie), 2, dim) + &
         diff_pert_h_star * SPREAD(diffusivity_prev, 2, dim)
-      CALL c_diff_fast(for_du, d2u, d2u_dummy, j_lev, ng, meth, 10, dim, 1, dim)
+      CALL c_diff_fast(for_du, d2u, d2u_dummy, j_lev, ng, div_meth(meth), 10, dim, 1, dim)
       DO i = 1, dim
         user_Drhs(shift+1:shift+ng) = user_Drhs(shift+1:shift+ng) + d2u(i,:,i)
       END DO
@@ -391,7 +395,7 @@ CONTAINS
     END IF
 
     IF (IMEXswitch.GE.0) THEN
-      CALL c_diff_diag(du, d2u, j_lev, ng, meth, meth, -11)
+      CALL c_diff_diag(du, d2u, j_lev, ng, grad_meth(meth), div_meth(meth), -11)
       for_du = &
         du * grad_h_star_prev * SPREAD(Ddiffusivity_prev, 2, dim) + &
         d2u * SPREAD(diffusivity_prev * Dh_star_prev, 2, dim)
@@ -407,7 +411,6 @@ CONTAINS
 
     user_chi = 0.0_pr
   END FUNCTION user_chi
-
 
   FUNCTION user_mapping (xlocal, nlocal, t_local)
     USE curvilinear
@@ -536,7 +539,7 @@ CONTAINS
     call input_real ('fusion_smoothing', fusion_smoothing, 'stop')
     call input_real ('powder_smoothing', powder_smoothing, 'stop')
     call input_real ('eps_zero', eps_zero, 'stop')
-    call input_real ('diffusivity_scale', diffusivity_scale, 'stop')
+    call input_real ('lfrac_scale', lfrac_scale, 'stop')
     call input_real ('power_factor_2d', power_factor_2d, 'stop')
     call input_real ('tol_newton', tol_newton, 'stop')
     call input_integer ('max_iter_newton', max_iter_newton, 'stop')
@@ -701,6 +704,18 @@ CONTAINS
     ALLOCATE(var(nwlt,dim))
   END SUBROUTINE reallocate_vector
 
+  FUNCTION grad_meth (meth)
+    IMPLICIT NONE
+    INTEGER :: meth, grad_meth
+    grad_meth = meth + 2
+  END FUNCTION grad_meth
+
+  FUNCTION div_meth (meth)
+    IMPLICIT NONE
+    INTEGER :: meth, div_meth
+    div_meth = meth + 4
+  END FUNCTION div_meth
+
   SUBROUTINE user_pre_process
     IMPLICIT NONE
     REAL(pr), DIMENSION(nwlt) :: h, h_star, phi, psi, temp
@@ -731,7 +746,7 @@ CONTAINS
 
     ! NB: here, ng is not equal to nwlt
     for_du = RESHAPE((/ h_star /), SHAPE(for_du))
-    CALL c_diff_fast(for_du, du, du_dummy, j_lev, nwlt, meth, 10, ne, 1, ne)
+    CALL c_diff_fast(for_du, du, du_dummy, j_lev, nwlt, grad_meth(meth), 10, ne, 1, ne)
     CALL reallocate_vector(grad_h_star_prev); grad_h_star_prev = du(1,:,:)
   END SUBROUTINE user_pre_process
 

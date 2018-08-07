@@ -153,10 +153,10 @@ powder_depth = 1.0
 
 # numerics-specific parameters
 smoothing_method = 1                        # 0 - piecewise C^0, 1 - hyperbolic tangent C^\infty
-fusion_smoothing = 2                        # fusion_delta = fusion_delta*fusion_smoothing
+fusion_smoothing = 3                        # fusion_delta = fusion_delta*fusion_smoothing
 powder_smoothing = 0.4                      # factor for smoothing the powder bed
 eps_zero = 1e-12                            # approximation of zero
-diffusivity_scale = 1                       # scale factor for mesh adaptation
+lfrac_scale = 10                            # scale factor for mesh adaptation
 power_factor_2d = 0.3                       # laser power factor for the 2D problem
 tol_newton = 1e-6                           # tolerance for root finding algorithm
 max_iter_newton = 100                       # maximum number of iterations for root finding algorithm
