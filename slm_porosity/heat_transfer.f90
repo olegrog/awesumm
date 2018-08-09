@@ -38,7 +38,7 @@ MODULE user_case
   INTEGER n_var_temp
   INTEGER n_var_pressure
 
-  ! quantities used in RHS, DRHS, and algebraic BC
+  ! quantities used in DRHS and algebraic BC
   REAL(pr), DIMENSION(:),   ALLOCATABLE :: diffusivity_prev, Ddiffusivity_prev, Dh_star_prev
   REAL(pr), DIMENSION(:,:), ALLOCATABLE :: grad_h_star_prev
   REAL(pr), DIMENSION(:),   ALLOCATABLE :: enthalpy_prev, temp_prev, Dtemp_prev, psi_prev
@@ -320,8 +320,11 @@ CONTAINS
     REAL(pr) :: user_rhs(n)
     INTEGER :: ie, shift, i
     INTEGER, PARAMETER :: meth = 1
-    REAL(pr), DIMENSION(ng,dim) :: for_du
-    REAL(pr), DIMENSION(dim,ng,dim):: d2u, d2u_dummy
+    REAL(pr), DIMENSION(ng)         :: h, h_star, phi, psi
+    REAL(pr), DIMENSION(ng,ne)      :: for_du
+    REAL(pr), DIMENSION(ng,dim)     :: for_d2u
+    REAL(pr), DIMENSION(ne,ng,dim)  :: du, du_dummy
+    REAL(pr), DIMENSION(dim,ng,dim) :: d2u, d2u_dummy
 
     ie = n_var_enthalpy
     shift = ng*(ie-1)
@@ -331,8 +334,14 @@ CONTAINS
     END IF
 
     IF (IMEXswitch.GE.0) THEN
-      for_du = grad_h_star_prev * SPREAD(diffusivity_prev, 2, dim)
-      CALL c_diff_fast(for_du, d2u, d2u_dummy, j_lev, ng, div_meth(meth), 10, dim, 1, dim)
+      h = u_in(:,n_var_enthalpy)
+      h_star = enthalpy_star(h)
+      phi = liquid_fraction(h)
+      psi = porosity(u(:,n_var_porosity), phi)
+      for_du = RESHAPE(h_star, SHAPE(for_du))
+      CALL c_diff_fast(for_du, du, du_dummy, j_lev, nwlt, grad_meth(meth), 10, ne, 1, ne)
+      for_d2u = du(1,:,:) * SPREAD(diffusivity(h, psi), 2, dim)
+      CALL c_diff_fast(for_d2u, d2u, d2u_dummy, j_lev, ng, div_meth(meth), 10, dim, 1, dim)
       DO i = 1, dim
         user_rhs(shift+1:shift+ng) = user_rhs(shift+1:shift+ng) + d2u(i,:,i)
       END DO
@@ -346,9 +355,9 @@ CONTAINS
     REAL(pr) :: user_Drhs(n)
     INTEGER :: ie, shift, i
     INTEGER, SAVE :: k = 0
-    REAL(pr), DIMENSION(ng) :: pert_h_star
-    REAL(pr), DIMENSION(ng,dim) :: for_du, diff_pert_h_star
-    REAL(pr), DIMENSION(ne,ng,dim) :: du, du_dummy
+    REAL(pr), DIMENSION(ng)         :: pert_h_star
+    REAL(pr), DIMENSION(ng,dim)     :: for_d2u, diff_pert_h_star
+    REAL(pr), DIMENSION(ne,ng,dim)  :: du, du_dummy
     REAL(pr), DIMENSION(dim,ng,dim) :: d2u, d2u_dummy
 
     ie = n_var_enthalpy
@@ -362,18 +371,15 @@ CONTAINS
       pert_h_star = Dh_star_prev*pert_u(:,ie)
       CALL c_diff_fast(pert_h_star, du, du_dummy, j_lev, ng, grad_meth(meth), 10, ne, 1, ne)
       diff_pert_h_star = du(ie,:,:)
-      for_du = &
+      for_d2u = &
         grad_h_star_prev * SPREAD(Ddiffusivity_prev * pert_u(:,ie), 2, dim) + &
         diff_pert_h_star * SPREAD(diffusivity_prev, 2, dim)
-      CALL c_diff_fast(for_du, d2u, d2u_dummy, j_lev, ng, div_meth(meth), 10, dim, 1, dim)
+      CALL c_diff_fast(for_d2u, d2u, d2u_dummy, j_lev, ng, div_meth(meth), 10, dim, 1, dim)
       DO i = 1, dim
         user_Drhs(shift+1:shift+ng) = user_Drhs(shift+1:shift+ng) + d2u(i,:,i)
       END DO
     END IF
-    IF (user_Drhs(1).NE.user_Drhs(1)) THEN
-      PRINT *, '--- NaN in user_Drhs ---'
-      CALL ABORT
-    END IF
+    IF (user_Drhs(1).NE.user_Drhs(1)) STOP '--- NaN in user_Drhs ---'
     IF (BTEST(verb_level,1)) THEN
       PRINT *, 'Drhs', k
       k = k + 1
@@ -385,7 +391,7 @@ CONTAINS
     INTEGER, INTENT(IN) :: meth
     REAL(pr) :: user_Drhs_diag(n)
     INTEGER :: ie, shift, i
-    REAL(pr), DIMENSION(ng,dim) :: du, d2u, for_du
+    REAL(pr), DIMENSION(ng,dim) :: du, d2u, for_d2u
 
     ie = n_var_enthalpy
     shift = ng*(ie-1)
@@ -396,10 +402,10 @@ CONTAINS
 
     IF (IMEXswitch.GE.0) THEN
       CALL c_diff_diag(du, d2u, j_lev, ng, grad_meth(meth), div_meth(meth), -11)
-      for_du = &
+      for_d2u = &
         du * grad_h_star_prev * SPREAD(Ddiffusivity_prev, 2, dim) + &
         d2u * SPREAD(diffusivity_prev * Dh_star_prev, 2, dim)
-      user_Drhs_diag(shift+1:shift+ng) = SUM(for_du, 2)
+      user_Drhs_diag(shift+1:shift+ng) = SUM(for_d2u, 2)
     END IF
   END FUNCTION user_Drhs_diag
 
@@ -657,7 +663,7 @@ CONTAINS
     use_default = .FALSE.
     CALL get_all_local_h (h_arr)
     cfl_laser = MAXVAL(dt/h_arr(1,:)*scanning_speed)
-    cfl_diffusive = MAXVAL(dt/h_arr(1,:)**2/diffusivity_prev) / (1.0_pr - fusion_heat*Dphi_one)
+    cfl_diffusive = MAXVAL(dt/SUM(h_arr**2, 1)/diffusivity_prev) / (1.0_pr - fusion_heat*Dphi_one)
     CALL parallel_global_sum(REALMAXVAL=cfl_laser)
     CALL parallel_global_sum(REALMAXVAL=cfl_diffusive)
     cfl_out = cfl_laser
@@ -665,10 +671,7 @@ CONTAINS
     IF (par_rank.EQ.0) THEN
       PRINT *, 'CFL_laser =', cfl_laser, 'CFL_diffusive =', cfl_diffusive
     END IF
-    IF (u(1,1).NE.u(1,1)) THEN
-      PRINT *, '--- INFINITE ---'
-      CALL ABORT
-    END IF
+    IF (u(1,1).NE.u(1,1)) STOP '--- NaN in user_cal_cfl ---'
   END SUBROUTINE user_cal_cfl
 
   SUBROUTINE user_init_sgs_model
@@ -733,7 +736,7 @@ CONTAINS
     Dphi = liquid_fraction(h, 1)
     Dpsi = porosity(u(:,n_var_porosity), phi, Dphi)
 
-    ! quantities used in RHS and DRHS
+    ! quantities used in DRHS
     CALL reallocate_scalar(diffusivity_prev); diffusivity_prev = diffusivity(h, psi)
     CALL reallocate_scalar(Ddiffusivity_prev); Ddiffusivity_prev = diffusivity(h, psi, Dpsi)
     CALL reallocate_scalar(Dh_star_prev); Dh_star_prev = enthalpy_star(h, 1)
@@ -752,6 +755,7 @@ CONTAINS
 
   SUBROUTINE user_post_process
     IMPLICIT NONE
+    IF (ISNAN(SUM(u))) STOP '--- NaN in user_post_process ---'
   END SUBROUTINE user_post_process
 
   ELEMENTAL FUNCTION liquid_fraction (enthalpy, is_D)
