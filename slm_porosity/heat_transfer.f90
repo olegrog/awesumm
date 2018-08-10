@@ -756,6 +756,7 @@ CONTAINS
   SUBROUTINE user_post_process
     IMPLICIT NONE
     IF (ISNAN(SUM(u))) STOP '--- NaN in user_post_process ---'
+    IF (scanning_speed*t.GE.(xyzlimits(1,1) + xyzlimits(2,1))) STOP '--- Finished ---'
   END SUBROUTINE user_post_process
 
   ELEMENTAL FUNCTION liquid_fraction (enthalpy, is_D)
