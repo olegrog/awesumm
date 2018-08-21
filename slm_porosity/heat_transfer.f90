@@ -203,7 +203,14 @@ CONTAINS
       k_0 = conductivity(temp, phi)
       lambda = laser_heat_flux(x_surface, nlocal, 1.0_pr - initial_pool_radius**-2) / &
         (initial_temp * k_0 * (1.0_pr - psi))
+
+      u(:,n_var_porosity) = initial_porosity/(1.0_pr + EXP(-4*(powder_depth - depth)/powder_smoothing))
       u(:,n_var_temp) = temp * EXP(-lambda*depth - (depth/initial_pool_radius)**2)
+      ! first, find the approximate initial condition
+      u(:,n_var_enthalpy) = enthalpy(u(:,n_var_temp), lf_from_temperature(u(:,n_var_temp)))
+      ! second, update it by solving the corresponding equation
+      func_newton => enthalpy_equation
+      u(:,n_var_enthalpy) = find_root(u(:,n_var_enthalpy), u(:,n_var_temp))
     END IF
   END SUBROUTINE user_initial_conditions
 
@@ -337,7 +344,7 @@ CONTAINS
       h = u_in(:,n_var_enthalpy)
       h_star = enthalpy_star(h)
       phi = liquid_fraction(h)
-      psi = porosity(u(:,n_var_porosity), phi)
+      psi = porosity(psi_prev, phi)
       for_du = RESHAPE(h_star, SHAPE(for_du))
       CALL c_diff_fast(for_du, du, du_dummy, j_lev, nwlt, grad_meth(meth), 10, ne, 1, ne)
       for_d2u = du(1,:,:) * SPREAD(diffusivity(h, psi), 2, dim)
@@ -597,15 +604,6 @@ CONTAINS
     INTEGER,  INTENT(IN) :: flag
     REAL(pr) :: depth(nwlt)
 
-    IF (.NOT.flag) THEN
-      depth = xyzlimits(2,dim) - x(:,dim)
-      u(:,n_var_porosity) = initial_porosity/(1.0_pr + EXP(-4*(powder_depth - depth)/powder_smoothing))
-      ! first, find the approximate initial condition
-      u(:,n_var_enthalpy) = enthalpy(u(:,n_var_temp), lf_from_temperature(u(:,n_var_temp)))
-      ! second, update it by solving the corresponding equation
-      func_newton => enthalpy_equation
-      u(:,n_var_enthalpy) = find_root(u(:,n_var_enthalpy), u(:,n_var_temp))
-    END IF
     ! calculate the interpolated variables only
     u(:,n_var_temp) = temperature(u(:,n_var_enthalpy))
     u(:,n_var_lfrac) = liquid_fraction(u(:,n_var_enthalpy))
@@ -723,8 +721,8 @@ CONTAINS
     IMPLICIT NONE
     REAL(pr), DIMENSION(nwlt) :: h, h_star, phi, psi, temp
     REAL(pr), DIMENSION(nwlt) :: Dphi, Dpsi, Dtemp
-    REAL(pr), DIMENSION(nwlt,ne) :: for_du
-    REAL(pr), DIMENSION(ne,nwlt,dim) :: du, du_dummy
+    REAL(pr), DIMENSION(nwlt,n_integrated)     :: for_du
+    REAL(pr), DIMENSION(n_integrated,nwlt,dim) :: du, du_dummy
     INTEGER, PARAMETER :: meth = 1
 
     h = u(:,n_var_enthalpy)
@@ -747,9 +745,10 @@ CONTAINS
     CALL reallocate_scalar(Dtemp_prev); Dtemp_prev = temperature(h, temp)
     CALL reallocate_scalar(psi_prev); psi_prev = psi
 
-    ! NB: here, ng is not equal to nwlt
+    ! NB: 1) ng is not equal to nwlt after mesh adaptation
+    !     2) ne is not equal to n_integrated until first call of time integration method
     for_du = RESHAPE((/ h_star /), SHAPE(for_du))
-    CALL c_diff_fast(for_du, du, du_dummy, j_lev, nwlt, grad_meth(meth), 10, ne, 1, ne)
+    CALL c_diff_fast(for_du, du, du_dummy, j_lev, nwlt, grad_meth(meth), 10, n_integrated, 1, n_integrated)
     CALL reallocate_vector(grad_h_star_prev); grad_h_star_prev = du(1,:,:)
   END SUBROUTINE user_pre_process
 
