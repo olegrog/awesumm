@@ -24,8 +24,8 @@ Data_file_format    = F                     # T = formatted, F = unformatted
 IC_adapt_grid       = T                     # If is set to .FALSE. no grid adaptation is done after the data are read.
 do_Sequential_run   = F
 wlog                = T                     # Write file 'results/res._log'
-verb_level          = 1                     # Verbose level (bitwise flag): 1(001) - default, 15(1111) - most detailed
-debug_level         = 0                     # Debug level (bitwise flag): 0(000) - default, 7(111) - most detailed
+verb_level          = 1                     # Verbose level (bitwise flag): 1 - default, 31(11111) - most detailed
+debug_level         = 0                     # Debug level (bitwise flag):   0 - default, 31(11111) - most detailed
 
 ### Wavelet thresholding filter
 eps_init        = 5.0e-3                    # EPS used to adapt initial grid

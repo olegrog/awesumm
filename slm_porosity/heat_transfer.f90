@@ -130,7 +130,6 @@ CONTAINS
     CALL register_var('diffusivity',      integrated=f, adapt=tt, saved=t, interpolate=ff, exact=ff, req_restart=f)
     CALL register_var('liquid_fraction',  integrated=f, adapt=tt, saved=t, interpolate=ff, exact=ff, req_restart=f)
     CALL register_var('temperature',      integrated=f, adapt=ft, saved=t, interpolate=ff, exact=ff, req_restart=f)
-    CALL register_var('pressure',         integrated=f, adapt=ff, saved=f, interpolate=ff, exact=ff, req_restart=f)
 
     CALL setup_mapping()
     CALL print_variable_registery(FULL=.TRUE.)
@@ -140,7 +139,7 @@ CONTAINS
     n_var_diffus    = get_index('diffusivity')
     n_var_lfrac     = get_index('liquid_fraction')
     n_var_temp      = get_index('temperature')
-    n_var_pressure  = get_index('pressure')
+    n_var_pressure  = n_var_enthalpy  ! for compatibility
 
     ALLOCATE(i_p_face(0:dim))
     i_p_face(0) = 1
@@ -149,7 +148,7 @@ CONTAINS
     END DO
 
     ALLOCATE(Umn(n_var))
-    Umn = 0.0_pr !set up here if mean quantities are not zero and used in scales or equation
+    Umn = 0.0_pr ! set up here if mean quantities are not zero and used in scales or equation
     scaleCoeff = 1.0_pr
     scaleCoeff(n_var_lfrac) = lfrac_scale
 
@@ -193,6 +192,7 @@ CONTAINS
     REAL(pr) :: x_surface(nlocal,dim)     ! coordinates of the surface of laser energy absorption
 
     IF ( IC_restart_mode.EQ.0) THEN
+      ! 1. Introduce the initial melting pool in terms of the temperature field
       x_center = TRANSPOSE(SPREAD(laser_position(t), 2, nlocal))
       x_surface(:,:) = x(:,:)
       x_surface(:,dim) = x_center(:,dim)
@@ -203,12 +203,12 @@ CONTAINS
       k_0 = conductivity(temp, phi)
       lambda = laser_heat_flux(x_surface, nlocal, 1.0_pr - initial_pool_radius**-2) / &
         (initial_temp * k_0 * (1.0_pr - psi))
+      temp = temp * EXP(-lambda*depth - (depth/initial_pool_radius)**2)
 
-      u(:,n_var_porosity) = initial_porosity/(1.0_pr + EXP(-4*(powder_depth - depth)/powder_smoothing))
-      u(:,n_var_temp) = temp * EXP(-lambda*depth - (depth/initial_pool_radius)**2)
-      ! first, find the approximate initial condition
-      u(:,n_var_enthalpy) = enthalpy(u(:,n_var_temp), lf_from_temperature(u(:,n_var_temp)))
-      ! second, update it by solving the corresponding equation
+      ! 2. Calculate the enthalpy field from the temperature one
+      !   a) find the approximate initial condition
+      u(:,n_var_enthalpy) = enthalpy(temp, lf_from_temperature(temp))
+      !   b) update it by solving the corresponding equation
       func_newton => enthalpy_equation
       u(:,n_var_enthalpy) = find_root(u(:,n_var_enthalpy), u(:,n_var_temp))
     END IF
@@ -602,7 +602,14 @@ CONTAINS
     IMPLICIT NONE
     REAL(pr), INTENT(IN) :: t_local
     INTEGER,  INTENT(IN) :: flag
-    REAL(pr) :: depth(nwlt)
+    REAL(pr) :: depth(nwlt), x_center(nwlt,dim)
+
+    IF (flag.EQ.0) THEN
+      ! the IC for porosity is calculated here since it is not the integrated variable
+      x_center = TRANSPOSE(SPREAD(laser_position(t), 2, nwlt))
+      depth = x_center(:,dim) - x(:,dim)
+      u(:,n_var_porosity) = initial_porosity/(1.0_pr + EXP(-4*(powder_depth - depth)/powder_smoothing))
+    END IF
 
     ! calculate the interpolated variables only
     u(:,n_var_temp) = temperature(u(:,n_var_enthalpy))
@@ -844,9 +851,9 @@ CONTAINS
     Dtemp = temperature(enthalpy, temp)
     Dk_0 = conductivity(temp, phi, 1)*Dphi + conductivity(temp, phi, 2)*Dtemp
     Dc_p = capacity(temp, phi, 1)*Dphi + capacity(temp, phi, 2)*Dtemp
+    pterm = (1.0_pr - psi) / (1.0_pr - initial_porosity)
 
     IF (.NOT.PRESENT(Dpsi)) THEN
-      pterm = (1.0_pr - psi) / (1.0_pr - initial_porosity)
       diffusivity = k_0 / c_p * pterm
     ELSE
       Dpterm = -Dpsi / (1.0_pr - initial_porosity)
