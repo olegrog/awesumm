@@ -116,7 +116,7 @@ CONTAINS
     USE variable_mapping
     IMPLICIT NONE
     LOGICAL, OPTIONAL :: verb
-    LOGICAL, PARAMETER :: f = .FALSE., t = .TRUE.
+    LOGICAL, PARAMETER :: f_ = .FALSE., t_ = .TRUE.
     LOGICAL, DIMENSION(2), PARAMETER :: &
       ff = (/.FALSE.,.FALSE./), ft = (/.FALSE.,.TRUE./), tf = (/.TRUE.,.FALSE./), tt = (/.TRUE.,.TRUE./)
     INTEGER :: i
@@ -125,11 +125,11 @@ CONTAINS
     ! 1) diffusivity as the driven nonlinearity,
     ! 2) liquid_fraction for the BC,
     ! 3) temperature for the case of constant thermophysical properties.
-    CALL register_var('enthalpy',         integrated=t, adapt=ff, saved=t, interpolate=ff, exact=ff, req_restart=t)
-    CALL register_var('porosity',         integrated=f, adapt=ff, saved=t, interpolate=ff, exact=ff, req_restart=f)
-    CALL register_var('diffusivity',      integrated=f, adapt=tt, saved=t, interpolate=ff, exact=ff, req_restart=f)
-    CALL register_var('liquid_fraction',  integrated=f, adapt=tt, saved=t, interpolate=ff, exact=ff, req_restart=f)
-    CALL register_var('temperature',      integrated=f, adapt=ft, saved=t, interpolate=ff, exact=ff, req_restart=f)
+    CALL register_var('enthalpy',         integrated=t_, adapt=ff, saved=t_, interpolate=ff, exact=ff, req_restart=t_)
+    CALL register_var('porosity',         integrated=f_, adapt=ff, saved=t_, interpolate=ff, exact=ff, req_restart=f_)
+    CALL register_var('diffusivity',      integrated=f_, adapt=tt, saved=t_, interpolate=ff, exact=ff, req_restart=f_)
+    CALL register_var('liquid_fraction',  integrated=f_, adapt=tt, saved=t_, interpolate=ff, exact=ff, req_restart=f_)
+    CALL register_var('temperature',      integrated=f_, adapt=ft, saved=t_, interpolate=ff, exact=ff, req_restart=f_)
 
     CALL setup_mapping()
     CALL print_variable_registery(FULL=.TRUE.)
@@ -1066,7 +1066,7 @@ CONTAINS
     x2 = MINVAL(sgn*x(:,axis), MASK=mask)
     x2_loc = MINLOC(sgn*x(:,axis), MASK=mask)
     domain_bound = linear_interpolation(threshold, field(x1_loc(1)), field(x2_loc(1)), x1, x2)
-    IF (COUNT(mask).EQ.0 .OR. ABS(x2-x1).GT.min_distance) domain_bound = -1.0_pr/0.0_pr
+    IF (COUNT(mask).EQ.0 .OR. ABS(x2-x1).GT.min_distance) domain_bound = -HUGE(REAL(pr))
     CALL parallel_global_sum(REALMAXVAL=domain_bound)
     domain_bound = sgn*domain_bound
   END FUNCTION domain_bound
