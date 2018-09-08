@@ -20,20 +20,29 @@ MODULE user_case
   USE input_file_reader
   USE debug_vars
   !
-  ! case specific variables
+  ! Style guide for the following user case:
+  !   1) use long names for global variables (two or more words) and short names for local ones
+  !   2) use ELEMENTAL and PURE function wherever possible
+  !   3) avoid code duplication completely as much as possible
+  !   4) write 'IMPLICIT NONE' in all functions and subroutines
+  !   5) avoid lines more than 120 symbols
+  !   6) align column and comments
+  !   7) prefer obvious names, otherwise add comments
+  !   8) prefer intermediate local variables and functions
   !
+  ! case specific variables
   INTEGER n_var_enthalpy
   INTEGER n_var_porosity
-  INTEGER n_var_h_star
+  INTEGER n_var_diffus
   INTEGER n_var_lfrac
   INTEGER n_var_temp
   INTEGER n_var_pressure
 
-  ! quantities used in RHS, DRHS, and algebraic BC
-  REAL(pr), DIMENSION(:), ALLOCATABLE :: diffusivity_prev, Ddiffusivity_prev, Dh_star_prev
-  REAL(pr), DIMENSION(:,:), ALLOCATABLE :: diff_h_star_prev
-  REAL(pr), DIMENSION(:), ALLOCATABLE :: enthalpy_prev, temp_prev, Dtemp_prev, psi_prev
-  INTEGER, DIMENSION(:), ALLOCATABLE :: i_p_face
+  ! quantities used in DRHS and algebraic BC
+  REAL(pr), DIMENSION(:),   ALLOCATABLE :: diffusivity_prev, Ddiffusivity_prev, Dh_star_prev
+  REAL(pr), DIMENSION(:,:), ALLOCATABLE :: grad_h_star_prev
+  REAL(pr), DIMENSION(:),   ALLOCATABLE :: enthalpy_prev, temp_prev, Dtemp_prev, psi_prev
+  INTEGER,  DIMENSION(:),   ALLOCATABLE :: i_p_face
 
   ! thermophysical properties
   REAL(pr) :: Dconductivity_solid
@@ -60,55 +69,77 @@ MODULE user_case
   ! initial conditions
   REAL(pr) :: initial_temp
   REAL(pr) :: initial_pool_radius
-  REAL(pr), DIMENSION(3) :: initial_laser_position
+  REAL(pr) :: initial_laser_position(3)
+  REAL(pr) :: powder_depth
 
   ! numerics-specific parameters
-  INTEGER smoothing_method
-  REAL(pr) :: smoothing_width
-  REAL(pr) :: smoothing_factor
+  INTEGER  :: smoothing_method
+  REAL(pr) :: fusion_smoothing
+  REAL(pr) :: powder_smoothing
   REAL(pr) :: eps_zero
-  REAL(pr) :: porosity_scale
+  REAL(pr) :: lfrac_scale
   REAL(pr) :: power_factor_2d
+  REAL(pr) :: tol_newton
+  INTEGER  :: max_iter_newton
 
   ! derived quantities
   REAL(pr) :: enthalpy_S             ! temp=solidus,  phi=0
   REAL(pr) :: enthalpy_one           ! temp=1,        phi=1/2
   REAL(pr) :: enthalpy_L             ! temp=liquidus, phi=1
   REAL(pr) :: Dphi_one               ! maximum derivative of liquid fraction on enthalpy
+
+  ABSTRACT INTERFACE
+    ! NB: fortran prohibits creating pointers to elemental functions (only to pure),
+    !     but is possible to call a pure function from the elemental one
+    !     and it will be considered as elemental. Fortran's magic :)
+    PURE FUNCTION func_with_derivative(x, arg, is_D)
+      USE precision
+      IMPLICIT NONE
+      REAL(pr), INTENT (IN) :: x, arg
+      INTEGER,  INTENT (IN), OPTIONAL :: is_D
+      REAL(pr) :: func_with_derivative
+    END FUNCTION func_with_derivative
+  END INTERFACE
+
+  PROCEDURE(func_with_derivative), POINTER :: func_newton => null()
+
 CONTAINS
 
   !
   ! The following variables must be setup in this routine:
   !
-  ! n_integrated     ! first n_integrated eqns will be acted on for time integration
-  ! n_var_additional ! interpolated variables (adapted and saved are automatically included)
+  ! n_integrated     - first n_integrated eqns will be acted on for time integration
+  ! n_var_additional - interpolated variables (adapted and saved are automatically included)
   ! n_var
   !
   SUBROUTINE user_setup_pde (verb)
     USE variable_mapping
     IMPLICIT NONE
     LOGICAL, OPTIONAL :: verb
-    LOGICAL, PARAMETER :: f = .FALSE., t = .TRUE.
+    LOGICAL, PARAMETER :: f_ = .FALSE., t_ = .TRUE.
     LOGICAL, DIMENSION(2), PARAMETER :: &
       ff = (/.FALSE.,.FALSE./), ft = (/.FALSE.,.TRUE./), tf = (/.TRUE.,.FALSE./), tt = (/.TRUE.,.TRUE./)
     INTEGER :: i
 
-    CALL register_var('enthalpy',         integrated=t, adapt=ff, saved=t, interpolate=ff, exact=ff, req_restart=t)
-    CALL register_var('porosity',         integrated=f, adapt=tt, saved=t, interpolate=ff, exact=ff, req_restart=f)
-    CALL register_var('enthalpy_star',    integrated=f, adapt=tt, saved=f, interpolate=ff, exact=ff, req_restart=f)
-    CALL register_var('liquid_fraction',  integrated=f, adapt=ff, saved=t, interpolate=ff, exact=ff, req_restart=f)
-    CALL register_var('temperature',      integrated=f, adapt=ff, saved=t, interpolate=ff, exact=ff, req_restart=f)
-    CALL register_var('pressure',         integrated=f, adapt=ff, saved=f, interpolate=ff, exact=ff, req_restart=f)
+    ! Adapt mesh to
+    ! 1) diffusivity as the driven nonlinearity,
+    ! 2) liquid_fraction for the BC,
+    ! 3) temperature for the case of constant thermophysical properties.
+    CALL register_var('enthalpy',         integrated=t_, adapt=ff, saved=t_, interpolate=ff, exact=ff, req_restart=t_)
+    CALL register_var('porosity',         integrated=f_, adapt=ff, saved=t_, interpolate=ff, exact=ff, req_restart=f_)
+    CALL register_var('diffusivity',      integrated=f_, adapt=tt, saved=t_, interpolate=ff, exact=ff, req_restart=f_)
+    CALL register_var('liquid_fraction',  integrated=f_, adapt=tt, saved=t_, interpolate=ff, exact=ff, req_restart=f_)
+    CALL register_var('temperature',      integrated=f_, adapt=ft, saved=t_, interpolate=ff, exact=ff, req_restart=f_)
 
     CALL setup_mapping()
     CALL print_variable_registery(FULL=.TRUE.)
 
     n_var_enthalpy  = get_index('enthalpy')
     n_var_porosity  = get_index('porosity')
-    n_var_h_star    = get_index('enthalpy_star')
+    n_var_diffus    = get_index('diffusivity')
     n_var_lfrac     = get_index('liquid_fraction')
     n_var_temp      = get_index('temperature')
-    n_var_pressure  = get_index('pressure')
+    n_var_pressure  = n_var_enthalpy  ! for compatibility
 
     ALLOCATE(i_p_face(0:dim))
     i_p_face(0) = 1
@@ -117,9 +148,9 @@ CONTAINS
     END DO
 
     ALLOCATE(Umn(n_var))
-    Umn = 0.0_pr !set up here if mean quantities are not zero and used in scales or equation
-    scaleCoeff = 1.
-    scaleCoeff(n_var_porosity) = porosity_scale
+    Umn = 0.0_pr ! set up here if mean quantities are not zero and used in scales or equation
+    scaleCoeff = 1.0_pr
+    scaleCoeff(n_var_lfrac) = lfrac_scale
 
     IF (verb_level.GT.0) THEN
       PRINT *, 'n_integrated = ', n_integrated
@@ -136,12 +167,12 @@ CONTAINS
   !
   ! Set the exact solution for comparison to the simulated solution
   !
-  ! u          - array to fill in the exact solution
-  ! nlocal       - number of active wavelets
-  ! ne_local        - total number of equations
-  ! t          - time of current time step
-  ! l_n_var_exact_soln_index - index into the elements of u for which we need to
-  !                            find the exact solution
+  ! u                        - array to fill in the exact solution
+  ! nlocal                   - number of active wavelets
+  ! ne_local                 - total number of equations
+  ! t                        - time of current time step
+  ! l_n_var_exact_soln_index - index into the elements of u for which we need to find the exact solution
+  !
   SUBROUTINE user_exact_soln (u, nlocal, t_local, l_n_var_exact_soln)
     IMPLICIT NONE
     REAL(pr), INTENT(INOUT) :: u(nlocal,n_var_exact)
@@ -161,24 +192,32 @@ CONTAINS
     REAL(pr) :: x_surface(nlocal,dim)     ! coordinates of the surface of laser energy absorption
 
     IF ( IC_restart_mode.EQ.0) THEN
+      ! 1. Introduce the initial melting pool in terms of the temperature field
       x_center = TRANSPOSE(SPREAD(laser_position(t), 2, nlocal))
       x_surface(:,:) = x(:,:)
       x_surface(:,dim) = x_center(:,dim)
       depth = x_center(:,dim) - x(:,dim)
       temp = initial_temp*EXP(-SUM((x_surface-x_center)**2, 2)/initial_pool_radius**2)
       phi = lf_from_temperature(temp)
-      psi = porosity(phi, SPREAD(initial_porosity, 1, nlocal))
+      psi = porosity(SPREAD(initial_porosity, 1, nlocal), phi)
       k_0 = conductivity(temp, phi)
       lambda = laser_heat_flux(x_surface, nlocal, 1.0_pr - initial_pool_radius**-2) / &
         (initial_temp * k_0 * (1.0_pr - psi))
-      u(:,n_var_temp) = temp * EXP(-lambda*depth - (depth/initial_pool_radius)**2)
+      temp = temp * EXP(-lambda*depth - (depth/initial_pool_radius)**2)
+
+      ! 2. Calculate the enthalpy field from the temperature one
+      !   a) find the approximate initial condition
+      u(:,n_var_enthalpy) = enthalpy(temp, lf_from_temperature(temp))
+      !   b) update it by solving the corresponding equation
+      func_newton => enthalpy_equation
+      u(:,n_var_enthalpy) = find_root(u(:,n_var_enthalpy), u(:,n_var_temp))
     END IF
   END SUBROUTINE user_initial_conditions
 
   !
-  ! u_in      - fields on the adaptive grid
-  ! nlocal    - number of active points
-  ! ne_local  - number of equations
+  ! u_in     - fields on the adaptive grid
+  ! nlocal   - number of active points
+  ! ne_local - number of equations
   !
   SUBROUTINE user_algebraic_BC (Lu, u_in, nlocal, ne_local, jlev, meth)
     IMPLICIT NONE
@@ -189,7 +228,7 @@ CONTAINS
     REAL(pr), DIMENSION(ne_local,nlocal,dim) :: du, d2u
     INTEGER :: face(dim), iloc(nwlt)
 
-    CALL c_diff_fast (u_in, du, d2u, jlev, nlocal, meth, 10, ne_local, 1, ne_local)
+    CALL c_diff_fast (u_in, du, d2u, jlev, nlocal, grad_meth(meth), 10, ne_local, 1, ne_local)
 
     DO ie = 1, ne_local
       shift = nlocal*(ie-1)
@@ -221,7 +260,7 @@ CONTAINS
     REAL(pr), DIMENSION(nlocal,dim) :: du, d2u
     INTEGER :: face(dim), iloc(nwlt)
 
-    CALL c_diff_diag (du, d2u, jlev, nlocal, meth, meth, 10)
+    CALL c_diff_diag (du, d2u, jlev, nlocal, grad_meth(meth), div_meth(meth), -10)
 
     DO ie = 1, ne_local
       shift = nlocal*(ie-1)
@@ -272,8 +311,10 @@ CONTAINS
     END DO
   END SUBROUTINE user_algebraic_BC_rhs
 
+  !
+  ! To make u divergence free
+  !
   SUBROUTINE user_project (u, p, nlocal, meth)
-    !--Makes u divergence free
     IMPLICIT NONE
     REAL(pr), INTENT(INOUT) :: u(nlocal,n_integrated), p(nlocal)
     INTEGER,  INTENT(IN) :: nlocal, meth
@@ -286,8 +327,11 @@ CONTAINS
     REAL(pr) :: user_rhs(n)
     INTEGER :: ie, shift, i
     INTEGER, PARAMETER :: meth = 1
-    REAL(pr), DIMENSION(ng,dim) :: for_du
-    REAL(pr), DIMENSION(dim,ng,dim):: d2u, d2u_dummy
+    REAL(pr), DIMENSION(ng)         :: h, h_star, phi, psi
+    REAL(pr), DIMENSION(ng,ne)      :: for_du
+    REAL(pr), DIMENSION(ng,dim)     :: for_d2u
+    REAL(pr), DIMENSION(ne,ng,dim)  :: du, du_dummy
+    REAL(pr), DIMENSION(dim,ng,dim) :: d2u, d2u_dummy
 
     ie = n_var_enthalpy
     shift = ng*(ie-1)
@@ -297,8 +341,14 @@ CONTAINS
     END IF
 
     IF (IMEXswitch.GE.0) THEN
-      for_du = diff_h_star_prev * SPREAD(diffusivity_prev, 2, dim)
-      CALL c_diff_fast(for_du, d2u, d2u_dummy, j_lev, ng, meth, 10, dim, 1, dim)
+      h = u_in(:,n_var_enthalpy)
+      h_star = enthalpy_star(h)
+      phi = liquid_fraction(h)
+      psi = porosity(psi_prev, phi)
+      for_du = RESHAPE(h_star, SHAPE(for_du))
+      CALL c_diff_fast(for_du, du, du_dummy, j_lev, nwlt, grad_meth(meth), 10, ne, 1, ne)
+      for_d2u = du(1,:,:) * SPREAD(diffusivity(h, psi), 2, dim)
+      CALL c_diff_fast(for_d2u, d2u, d2u_dummy, j_lev, ng, div_meth(meth), 10, dim, 1, dim)
       DO i = 1, dim
         user_rhs(shift+1:shift+ng) = user_rhs(shift+1:shift+ng) + d2u(i,:,i)
       END DO
@@ -312,9 +362,9 @@ CONTAINS
     REAL(pr) :: user_Drhs(n)
     INTEGER :: ie, shift, i
     INTEGER, SAVE :: k = 0
-    REAL(pr), DIMENSION(ng) :: pert_h_star
-    REAL(pr), DIMENSION(ng,dim) :: for_du, diff_pert_h_star
-    REAL(pr), DIMENSION(ne,ng,dim) :: du, du_dummy
+    REAL(pr), DIMENSION(ng)         :: pert_h_star
+    REAL(pr), DIMENSION(ng,dim)     :: for_d2u, diff_pert_h_star
+    REAL(pr), DIMENSION(ne,ng,dim)  :: du, du_dummy
     REAL(pr), DIMENSION(dim,ng,dim) :: d2u, d2u_dummy
 
     ie = n_var_enthalpy
@@ -326,20 +376,17 @@ CONTAINS
 
     IF (IMEXswitch.GE.0) THEN
       pert_h_star = Dh_star_prev*pert_u(:,ie)
-      CALL c_diff_fast(pert_h_star, du, du_dummy, j_lev, ng, meth, 10, ne, 1, ne)
+      CALL c_diff_fast(pert_h_star, du, du_dummy, j_lev, ng, grad_meth(meth), 10, ne, 1, ne)
       diff_pert_h_star = du(ie,:,:)
-      for_du = &
-        diff_h_star_prev * SPREAD(Ddiffusivity_prev * pert_h_star, 2, dim) + &
+      for_d2u = &
+        grad_h_star_prev * SPREAD(Ddiffusivity_prev * pert_u(:,ie), 2, dim) + &
         diff_pert_h_star * SPREAD(diffusivity_prev, 2, dim)
-      CALL c_diff_fast(for_du, d2u, d2u_dummy, j_lev, ng, meth, 10, dim, 1, dim)
+      CALL c_diff_fast(for_d2u, d2u, d2u_dummy, j_lev, ng, div_meth(meth), 10, dim, 1, dim)
       DO i = 1, dim
         user_Drhs(shift+1:shift+ng) = user_Drhs(shift+1:shift+ng) + d2u(i,:,i)
       END DO
     END IF
-    IF (user_Drhs(1).NE.user_Drhs(1)) THEN
-      PRINT *, '--- NaN in user_Drhs ---'
-      CALL ABORT
-    END IF
+    IF (user_Drhs(1).NE.user_Drhs(1)) STOP '--- NaN in user_Drhs ---'
     IF (BTEST(verb_level,1)) THEN
       PRINT *, 'Drhs', k
       k = k + 1
@@ -351,7 +398,7 @@ CONTAINS
     INTEGER, INTENT(IN) :: meth
     REAL(pr) :: user_Drhs_diag(n)
     INTEGER :: ie, shift, i
-    REAL(pr), DIMENSION(ng,dim) :: du, d2u, for_du
+    REAL(pr), DIMENSION(ng,dim) :: du, d2u, for_d2u
 
     ie = n_var_enthalpy
     shift = ng*(ie-1)
@@ -361,11 +408,11 @@ CONTAINS
     END IF
 
     IF (IMEXswitch.GE.0) THEN
-      CALL c_diff_diag(du, d2u, j_lev, ng, meth, meth, -11)
-      for_du = &
-        du * diff_h_star_prev * SPREAD(Ddiffusivity_prev, 2, dim) + &
+      CALL c_diff_diag(du, d2u, j_lev, ng, grad_meth(meth), div_meth(meth), -11)
+      for_d2u = &
+        du * grad_h_star_prev * SPREAD(Ddiffusivity_prev, 2, dim) + &
         d2u * SPREAD(diffusivity_prev * Dh_star_prev, 2, dim)
-      user_Drhs_diag(shift+1:shift+ng) = SUM(for_du, 2)
+      user_Drhs_diag(shift+1:shift+ng) = SUM(for_d2u, 2)
     END IF
   END FUNCTION user_Drhs_diag
 
@@ -377,7 +424,6 @@ CONTAINS
 
     user_chi = 0.0_pr
   END FUNCTION user_chi
-
 
   FUNCTION user_mapping (xlocal, nlocal, t_local)
     USE curvilinear
@@ -405,14 +451,14 @@ CONTAINS
     REAL(pr) :: phi(nwlt), h_arr(dim,nwlt), vars(dim+3)
     REAL(pr) :: xmin, xmax, ymax, zmin, h_max
     REAL(pr), PARAMETER :: threshold = 0.5_pr
-    CHARACTER(LEN=16), PARAMETER :: file_name = 'melting_pool.txt'
-    CHARACTER(LEN=100) :: header, columns
+    CHARACTER(LEN=200) :: melting_pool, header, columns
 
+    melting_pool = TRIM(res_path)//'melting_pool.txt'
     IF (startup_flag.EQ.0) THEN
       IF (par_rank.EQ.0) THEN
         header = '# time      max_temp    volume      length      depth'
         IF (dim.EQ.3) header = TRIM(header) // '       width'
-        OPEN(555, FILE=file_name, STATUS='replace', ACTION='write')
+        OPEN(555, FILE=melting_pool, STATUS='replace', ACTION='write')
         WRITE(555, *) TRIM(header)
         CLOSE(555)
       END IF
@@ -438,15 +484,17 @@ CONTAINS
         columns = '(' // REPEAT('ES10.3, 2x', SIZE(vars)) // ')'
         vars = (/ t, max_temp, volume, length, depth /)
         IF (dim.EQ.3) vars(SIZE(vars)) = width
-        OPEN(555, FILE=file_name, STATUS='old', POSITION='append', ACTION='write')
+        OPEN(555, FILE=melting_pool, STATUS='old', POSITION='append', ACTION='write')
         WRITE(555, TRIM(columns)) vars
         CLOSE(555)
       END IF
     END IF
   END SUBROUTINE user_stats
 
+  !
+  ! Calculate drag and lift on obstacle using penalization formula
+  !
   SUBROUTINE user_cal_force (u, n, t_local, force, drag, lift)
-    !--Calculates drag and lift on obstacle using penalization formula
     IMPLICIT NONE
     REAL(pr), INTENT(IN) :: u(n,dim)
     INTEGER,  INTENT(IN) :: n
@@ -467,6 +515,9 @@ CONTAINS
   !
   SUBROUTINE user_read_input ()
     IMPLICIT NONE
+    CHARACTER(LEN=*), PARAMETER :: fmt_real = '(A30,F10.7)'
+    CHARACTER(LEN=*), PARAMETER :: stars = REPEAT('*', 20)
+    REAL(pr) :: thickness
 
     ! thermophysical properties
     call input_real ('Dconductivity_solid', Dconductivity_solid, 'stop')
@@ -494,69 +545,91 @@ CONTAINS
     call input_real ('initial_temp', initial_temp, 'stop')
     call input_real ('initial_pool_radius', initial_pool_radius, 'stop')
     call input_real_vector ('initial_laser_position', initial_laser_position, 3, 'stop')
+    call input_real ('powder_depth', powder_depth, 'stop')
 
     ! numerics-specific parameters
     call input_integer ('smoothing_method', smoothing_method, 'stop')
-    call input_real ('smoothing_width', smoothing_width, 'stop')
-    call input_real ('smoothing_factor', smoothing_factor, 'stop')
+    call input_real ('fusion_smoothing', fusion_smoothing, 'stop')
+    call input_real ('powder_smoothing', powder_smoothing, 'stop')
     call input_real ('eps_zero', eps_zero, 'stop')
-    call input_real ('porosity_scale', porosity_scale, 'stop')
+    call input_real ('lfrac_scale', lfrac_scale, 'stop')
     call input_real ('power_factor_2d', power_factor_2d, 'stop')
+    call input_real ('tol_newton', tol_newton, 'stop')
+    call input_integer ('max_iter_newton', max_iter_newton, 'stop')
+
+    ! calculate the real quantities
+    enthalpy_S = enthalpy(1.0_pr - fusion_delta/2, 0.0_pr)
+    enthalpy_L = enthalpy(1.0_pr + fusion_delta/2, 1.0_pr)
+    thickness = (enthalpy_L - enthalpy_S - fusion_heat)/capacity(1.0_pr, 0.5_pr)
+
+    IF (par_rank.EQ.0) THEN
+      PRINT *, stars, ' Real quantities ', stars
+      PRINT fmt_real, 'enthalpy_S =', enthalpy_S
+      PRINT fmt_real, 'enthalpy_L =', enthalpy_L
+      PRINT fmt_real, 'interface thickness =', thickness
+    END IF
 
     ! smooth solid-liquid interface
-    fusion_delta = fusion_delta*smoothing_factor
+    fusion_delta = fusion_delta*fusion_smoothing
 
     ! calculate the derived quantities
     enthalpy_S = enthalpy(1.0_pr - fusion_delta/2, 0.0_pr)
     enthalpy_one = enthalpy(1.0_pr, 0.5_pr)
     enthalpy_L = enthalpy(1.0_pr + fusion_delta/2, 1.0_pr)
     Dphi_one = 1.0_pr/(enthalpy_L - enthalpy_S)
+    thickness = (enthalpy_L - enthalpy_S - fusion_heat)/capacity(1.0_pr, 0.5_pr)
 
     IF (par_rank.EQ.0) THEN
-      PRINT *, 'enthalpy_S = ', enthalpy_S
-      PRINT *, 'enthalpy_one = ', enthalpy_one
-      PRINT *, 'enthalpy_L = ', enthalpy_L
-      PRINT *, 'Dphi_one = ', Dphi_one
+      PRINT *, stars, ' Computational quantities ', stars
+      PRINT fmt_real, 'enthalpy_S =', enthalpy_S
+      PRINT fmt_real, 'enthalpy_L =', enthalpy_L
+      PRINT fmt_real, 'enthalpy(1) =', enthalpy_one
+      PRINT fmt_real, 'Dphi(1) =', Dphi_one
+      PRINT fmt_real, 'capacity(1) =', capacity(1.0_pr, 0.5_pr)
+      PRINT fmt_real, 'conductivity(1) =', conductivity(1.0_pr, 0.5_pr)
+      PRINT fmt_real, 'interface thickness =', thickness
     END IF
   END SUBROUTINE user_read_input
 
   !
-  ! calculate any additional variables
+  ! Calculate any additional variables
   !
-  ! arg
-  ! flag - 0 calledwhile adapting to IC, 1 - called in main time integration loop
+  ! flag: 0 - called while adapting to IC, 1 - called in main time integration loop
   !
   ! These additional variables are calculated and left in real space.
   !
   SUBROUTINE user_additional_vars (t_local, flag)
     IMPLICIT NONE
     REAL(pr), INTENT(IN) :: t_local
-    INTEGER,  INTENT(IN) :: flag ! 0- called during adaption to IC, 1 called during main integration loop
+    INTEGER,  INTENT(IN) :: flag
+    REAL(pr) :: depth(nwlt), x_center(nwlt,dim)
 
-    IF (.NOT.flag) THEN
-      u(:,n_var_porosity) = initial_porosity
-      u(:,n_var_enthalpy) = enthalpy(u(:,n_var_temp), lf_from_temperature(u(:,n_var_temp)))
+    IF (flag.EQ.0) THEN
+      ! the IC for porosity is calculated here since it is not the integrated variable
+      x_center = TRANSPOSE(SPREAD(laser_position(t), 2, nwlt))
+      depth = x_center(:,dim) - x(:,dim)
+      u(:,n_var_porosity) = initial_porosity/(1.0_pr + EXP(-4*(powder_depth - depth)/powder_smoothing))
     END IF
+
     ! calculate the interpolated variables only
     u(:,n_var_temp) = temperature(u(:,n_var_enthalpy))
     u(:,n_var_lfrac) = liquid_fraction(u(:,n_var_enthalpy))
-    u(:,n_var_porosity) = porosity(u(:,n_var_lfrac), u(:,n_var_porosity))
-    u(:,n_var_h_star) = u(:,n_var_enthalpy) - fusion_heat*u(:,n_var_lfrac)
+    u(:,n_var_porosity) = porosity(u(:,n_var_porosity), u(:,n_var_lfrac))
+    u(:,n_var_diffus) = diffusivity(u(:,n_var_enthalpy), u(:,n_var_porosity))
   END SUBROUTINE user_additional_vars
 
   !
-  ! calculate any additional scalar variables
+  ! Calculate any additional scalar variables
   !
-  ! arg
-  ! flag - 0 calledwhile adapting to IC, 1 - called in main time integration loop
+  ! flag: 0 - called while adapting to IC, 1 - called in main time integration loop
   !
   SUBROUTINE user_scalar_vars (flag)
     IMPLICIT NONE
-    INTEGER, INTENT(IN) :: flag ! 0- called during adaption to IC, 1 called during main integration loop
+    INTEGER, INTENT(IN) :: flag
   END SUBROUTINE user_scalar_vars
 
   !
-  !************ Calculating Scales ***************************
+  ! Calculating Scales
   !
   ! Note the order of the components in the scl array
   ! correspond to u_tn, v_tn, w_tn, u_tn-1, v_tn-1, w_tn-1, u_tn-2, v_tn-2, w_tn-2
@@ -590,16 +663,20 @@ CONTAINS
     LOGICAL,  INTENT(INOUT) :: use_default
     REAL(pr), INTENT(IN)    :: u(nwlt,n_integrated)
     REAL(pr), INTENT(INOUT) :: cfl_out
-    REAL(pr) :: h_arr(dim,nwlt)
+    REAL(pr) :: h_arr(dim,nwlt), cfl_laser, cfl_diffusive
 
     use_default = .FALSE.
     CALL get_all_local_h (h_arr)
-    cfl_out = MAXVAL(dt/h_arr(1,:)*scanning_speed)
-    CALL parallel_global_sum(REALMAXVAL=cfl_out)
-    IF (u(1,1).NE.u(1,1)) THEN
-      PRINT *, '--- INFINITE ---'
-      CALL ABORT
+    cfl_laser = MAXVAL(dt/h_arr(1,:)*scanning_speed)
+    cfl_diffusive = MAXVAL(dt/SUM(h_arr**2, 1)/diffusivity_prev) / (1.0_pr - fusion_heat*Dphi_one)
+    CALL parallel_global_sum(REALMAXVAL=cfl_laser)
+    CALL parallel_global_sum(REALMAXVAL=cfl_diffusive)
+    cfl_out = cfl_laser
+    IF (time_integration_method == TIME_INT_RK) cfl_out = MAX(cfl_out, cfl_diffusive)
+    IF (par_rank.EQ.0) THEN
+      PRINT *, 'CFL_laser =', cfl_laser, 'CFL_diffusive =', cfl_diffusive
     END IF
+    IF (u(1,1).NE.u(1,1)) STOP '--- NaN in user_cal_cfl ---'
   END SUBROUTINE user_cal_cfl
 
   SUBROUTINE user_init_sgs_model
@@ -635,57 +712,68 @@ CONTAINS
     ALLOCATE(var(nwlt,dim))
   END SUBROUTINE reallocate_vector
 
+  FUNCTION grad_meth (meth)
+    IMPLICIT NONE
+    INTEGER :: meth, grad_meth
+    grad_meth = meth + 2
+  END FUNCTION grad_meth
+
+  FUNCTION div_meth (meth)
+    IMPLICIT NONE
+    INTEGER :: meth, div_meth
+    div_meth = meth + 4
+  END FUNCTION div_meth
+
   SUBROUTINE user_pre_process
     IMPLICIT NONE
-    REAL(pr), DIMENSION(nwlt) :: h_star, phi, psi, temp, k_0, c_p
-    REAL(pr), DIMENSION(nwlt) :: Dphi, Dtemp, Dk_0, Dc_p
-    REAL(pr), DIMENSION(nwlt,ne) :: for_du
-    REAL(pr), DIMENSION(ne,nwlt,dim) :: du, du_dummy
+    REAL(pr), DIMENSION(nwlt) :: h, h_star, phi, psi, temp
+    REAL(pr), DIMENSION(nwlt) :: Dphi, Dpsi, Dtemp
+    REAL(pr), DIMENSION(nwlt,n_integrated)     :: for_du
+    REAL(pr), DIMENSION(n_integrated,nwlt,dim) :: du, du_dummy
     INTEGER, PARAMETER :: meth = 1
 
-    h_star = enthalpy_star(u(:,n_var_enthalpy))
-    phi = liquid_fraction(u(:,n_var_enthalpy))
-    psi = porosity(phi, u(:,n_var_porosity))
-    temp = temperature(u(:,n_var_enthalpy))
-    k_0 = conductivity(temp, phi)
-    c_p = capacity(temp, phi)
+    h = u(:,n_var_enthalpy)
+    h_star = enthalpy_star(h)
+    phi = liquid_fraction(h)
+    psi = porosity(u(:,n_var_porosity), phi)
+    temp = temperature(h)
 
-    Dphi = liquid_fraction(u(:,n_var_enthalpy), 1)
-    Dtemp = temperature(u(:,n_var_enthalpy), temp)
-    Dk_0 = conductivity(temp, phi, 1)*Dphi + conductivity(temp, phi, 2)*Dtemp
-    Dc_p = capacity(temp, phi, 1)*Dphi + capacity(temp, phi, 2)*Dtemp
+    Dphi = liquid_fraction(h, 1)
+    Dpsi = porosity(u(:,n_var_porosity), phi, Dphi)
 
-    ! quantities used in RHS and DRHS
-    CALL reallocate_scalar(diffusivity_prev); diffusivity_prev = k_0 / c_p * porosity_term(psi)
-    CALL reallocate_scalar(Ddiffusivity_prev); Ddiffusivity_prev = (Dk_0*c_p - Dc_p*k_0) / c_p**2 * porosity_term(psi)
-    CALL reallocate_scalar(Dh_star_prev); Dh_star_prev = enthalpy_star(u(:,n_var_enthalpy), 1)
+    ! quantities used in DRHS
+    CALL reallocate_scalar(diffusivity_prev); diffusivity_prev = diffusivity(h, psi)
+    CALL reallocate_scalar(Ddiffusivity_prev); Ddiffusivity_prev = diffusivity(h, psi, Dpsi)
+    CALL reallocate_scalar(Dh_star_prev); Dh_star_prev = enthalpy_star(h, 1)
+
     ! quantities used in algebraic BC
-    CALL reallocate_scalar(enthalpy_prev); enthalpy_prev = u(:,n_var_enthalpy)
+    CALL reallocate_scalar(enthalpy_prev); enthalpy_prev = h
     CALL reallocate_scalar(temp_prev); temp_prev = temp
-    CALL reallocate_scalar(Dtemp_prev); Dtemp_prev = Dtemp
+    CALL reallocate_scalar(Dtemp_prev); Dtemp_prev = temperature(h, temp)
     CALL reallocate_scalar(psi_prev); psi_prev = psi
 
-    ! NB: here, ng is not equal to nwlt
+    ! NB: 1) ng is not equal to nwlt after mesh adaptation
+    !     2) ne is not equal to n_integrated until first call of time integration method
     for_du = RESHAPE((/ h_star /), SHAPE(for_du))
-    CALL c_diff_fast(for_du, du, du_dummy, j_lev, nwlt, meth, 10, ne, 1, ne)
-    CALL reallocate_vector(diff_h_star_prev); diff_h_star_prev = du(1,:,:)
+    CALL c_diff_fast(for_du, du, du_dummy, j_lev, nwlt, grad_meth(meth), 10, n_integrated, 1, n_integrated)
+    CALL reallocate_vector(grad_h_star_prev); grad_h_star_prev = du(1,:,:)
   END SUBROUTINE user_pre_process
 
   SUBROUTINE user_post_process
     IMPLICIT NONE
+    IF (ISNAN(SUM(u))) STOP '--- NaN in user_post_process ---'
+    IF (scanning_speed*t.GE.(xyzlimits(1,1) + xyzlimits(2,1))) STOP '--- Finished ---'
   END SUBROUTINE user_post_process
 
   ELEMENTAL FUNCTION liquid_fraction (enthalpy, is_D)
     IMPLICIT NONE
-    REAL(pr),          INTENT(IN) :: enthalpy
-    INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL(pr), INTENT(IN) :: enthalpy
+    INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: liquid_fraction
 
     IF (smoothing_method.EQ.0) THEN         ! C^0
       liquid_fraction = lf_piecewise(enthalpy, is_D)
-    ELSE IF (smoothing_method.EQ.1) THEN    ! C^1
-      liquid_fraction = lf_cubic_splines(enthalpy, is_D)
-    ELSE IF (smoothing_method.EQ.2) THEN    ! C^\infty
+    ELSE IF (smoothing_method.EQ.1) THEN    ! C^\infty
       liquid_fraction = lf_exponent(enthalpy, is_D)
     END IF
   END FUNCTION liquid_fraction
@@ -700,8 +788,8 @@ CONTAINS
 
   ELEMENTAL FUNCTION lf_piecewise (enthalpy, is_D)
     IMPLICIT NONE
-    REAL(pr),          INTENT(IN) :: enthalpy
-    INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL(pr), INTENT(IN) :: enthalpy
+    INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: lf_piecewise
 
     IF (.NOT.PRESENT(is_D)) THEN
@@ -717,8 +805,8 @@ CONTAINS
 
   ELEMENTAL FUNCTION lf_exponent (enthalpy, is_D)
     IMPLICIT NONE
-    REAL(pr),          INTENT(IN) :: enthalpy
-    INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL(pr), INTENT(IN) :: enthalpy
+    INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: lf_exponent
 
     lf_exponent = EXP(-4*Dphi_one*(enthalpy - enthalpy_one))
@@ -730,56 +818,53 @@ CONTAINS
     END IF
   END FUNCTION lf_exponent
 
-  ELEMENTAL FUNCTION lf_cubic_splines (enthalpy, is_D)
+  ! return Dporosity if the third argument is provided
+  ELEMENTAL FUNCTION porosity (previous, phi, Dphi)
     IMPLICIT NONE
-    REAL(pr),          INTENT(IN) :: enthalpy
-    INTEGER, OPTIONAL, INTENT(IN) :: is_D
-    REAL(pr) :: lf_cubic_splines
-    REAL(pr), DIMENSION(4) :: coeff
-    REAL(pr) :: delta, enthalpy_Sm, enthalpy_Sp, enthalpy_Lm, enthalpy_Lp
+    REAL(pr), INTENT(IN) :: previous, phi
+    REAL(pr), INTENT(IN), OPTIONAL :: Dphi
+    REAL(pr) :: porosity
 
-    delta = smoothing_width/Dphi_one              ! width of the cubic splines
-    enthalpy_Sm = enthalpy_S - delta
-    enthalpy_Sp = enthalpy_S + delta
-    enthalpy_Lm = enthalpy_L - delta
-    enthalpy_Lp = enthalpy_L + delta
-
-    coeff = Spline_cubic(enthalpy_Sm, enthalpy_Sp, 0.0_pr, smoothing_width, 0.0_pr, Dphi_one)
-    lf_cubic_splines = lf_piecewise(enthalpy, is_D)
-
-    IF (.NOT.PRESENT(is_D)) THEN
-      IF (enthalpy.GT.enthalpy_Sm .AND. enthalpy.LE.enthalpy_Sp) THEN
-        lf_cubic_splines = coeff(2)*enthalpy**2 + coeff(3)*enthalpy + coeff(4)
-      ELSE IF (enthalpy.GT.enthalpy_Lm .AND. enthalpy.LE.enthalpy_Lp) THEN
-        lf_cubic_splines = 1.0_pr - coeff(2)*(2*enthalpy_one - enthalpy)**2 - coeff(3)*(2*enthalpy_one - enthalpy) - coeff(4)
-      END IF
-    ELSE
-      IF (enthalpy.GT.enthalpy_Sm .AND. enthalpy.LE.enthalpy_Sp) THEN
-        lf_cubic_splines = coeff(2)*enthalpy*2 + coeff(3)
-      ELSE IF (enthalpy.GT.enthalpy_Lm .AND. enthalpy.LE.enthalpy_Lp) THEN
-        lf_cubic_splines = coeff(2)*(2*enthalpy_one - enthalpy)*2 + coeff(3)
+    porosity = MAX(0.0_pr, MIN(previous, initial_porosity*(1.0_pr - phi)))
+    IF (PRESENT(Dphi)) THEN
+      IF (porosity.LT.previous) THEN
+        porosity = -initial_porosity*Dphi
+      ELSE
+        porosity = 0.0_pr
       END IF
     END IF
-  END FUNCTION lf_cubic_splines
-
-  ELEMENTAL FUNCTION porosity (liquid_fraction, previous)
-    IMPLICIT NONE
-    REAL(pr), INTENT(IN) :: liquid_fraction, previous
-    REAL(pr) :: porosity
-    porosity = MAX(0.0_pr, MIN(previous, initial_porosity*(1.0_pr - liquid_fraction)))
   END FUNCTION porosity
 
-  ELEMENTAL FUNCTION porosity_term (porosity)
+  ELEMENTAL FUNCTION diffusivity (enthalpy, psi, Dpsi)
     IMPLICIT NONE
-    REAL(pr), INTENT(IN) :: porosity
-    REAL(pr) :: porosity_term
-    porosity_term = (1.0_pr - porosity) / (1.0_pr - initial_porosity)
-  END FUNCTION porosity_term
+    REAL(pr), INTENT(IN) :: enthalpy, psi
+    REAL(pr), INTENT(IN), OPTIONAL :: Dpsi
+    REAL(pr) :: diffusivity, phi, temp, k_0, c_p, pterm
+    REAL(pr) :: Dphi, Dtemp, Dk_0, Dc_p, Dpterm
+
+    phi = liquid_fraction(enthalpy)
+    temp = temperature(enthalpy)
+    k_0 = conductivity(temp, phi)
+    c_p = capacity(temp, phi)
+
+    Dphi = liquid_fraction(enthalpy, 1)
+    Dtemp = temperature(enthalpy, temp)
+    Dk_0 = conductivity(temp, phi, 1)*Dphi + conductivity(temp, phi, 2)*Dtemp
+    Dc_p = capacity(temp, phi, 1)*Dphi + capacity(temp, phi, 2)*Dtemp
+    pterm = (1.0_pr - psi) / (1.0_pr - initial_porosity)
+
+    IF (.NOT.PRESENT(Dpsi)) THEN
+      diffusivity = k_0 / c_p * pterm
+    ELSE
+      Dpterm = -Dpsi / (1.0_pr - initial_porosity)
+      diffusivity = (Dk_0*c_p - Dc_p*k_0) / c_p**2 * pterm + k_0 / c_p * Dpterm
+    END IF
+  END FUNCTION diffusivity
 
   ELEMENTAL FUNCTION conductivity (temp, phi, is_D)
     IMPLICIT NONE
-    REAL(pr),          INTENT(IN) :: temp, phi
-    INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL(pr), INTENT(IN) :: temp, phi
+    INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: conductivity
 
     conductivity = three_parameter_model(temp, phi, &
@@ -788,8 +873,8 @@ CONTAINS
 
   ELEMENTAL FUNCTION capacity (temp, phi, is_D)
     IMPLICIT NONE
-    REAL(pr),          INTENT(IN) :: temp, phi
-    INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL(pr), INTENT(IN) :: temp, phi
+    INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: capacity
 
     capacity = three_parameter_model(temp, phi, &
@@ -799,8 +884,8 @@ CONTAINS
   ! is_D: 1 - partial derivative of liquid_fraction, 2 - partial derivative of temperature
   ELEMENTAL FUNCTION three_parameter_model (temp, phi, Dsolid, Dliquid, jump, is_D)
     IMPLICIT NONE
-    REAL(pr),          INTENT(IN) :: temp, phi, Dsolid, Dliquid, jump
-    INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL(pr), INTENT(IN) :: temp, phi, Dsolid, Dliquid, jump
+    INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: three_parameter_model
 
     IF (.NOT.PRESENT(is_D)) THEN
@@ -815,8 +900,8 @@ CONTAINS
   ! return Dtemperature if the second argument is provided
   ELEMENTAL FUNCTION temperature (enthalpy, temp)
     IMPLICIT NONE
-    REAL(pr),           INTENT(IN) :: enthalpy
-    REAL(pr), OPTIONAL, INTENT(IN) :: temp
+    REAL(pr), INTENT(IN) :: enthalpy
+    REAL(pr), INTENT(IN), OPTIONAL :: temp
     REAL(pr) :: temperature, h_star, phi, g1, g2, g3
     REAL(pr) :: Dh_star, Dphi, Dg1, Dg2, Dg3
 
@@ -846,20 +931,42 @@ CONTAINS
     END IF
   END FUNCTION temperature
 
-  ELEMENTAL FUNCTION enthalpy (temp, phi)
+  ! return Denthalpy if the third argument is provided
+  ELEMENTAL FUNCTION enthalpy (temp, phi, Dphi)
     IMPLICIT NONE
     REAL(pr), INTENT(IN) :: temp, phi
-    REAL(pr) :: enthalpy
+    REAL(pr),  INTENT(IN), OPTIONAL :: Dphi
+    REAL(pr) :: enthalpy, before_phi
 
-    enthalpy = temp + Dcapacity_solid/2*temp**2 + phi*(fusion_heat + &
-      (Dcapacity_solid - Dcapacity_liquid + capacity_fusion)*(temp - 1.0_pr) + &
-      (Dcapacity_liquid - Dcapacity_solid)/2*(temp**2 - 1.0_pr))
+    before_phi = (fusion_heat + &
+        (Dcapacity_solid - Dcapacity_liquid + capacity_fusion)*(temp - 1.0_pr) + &
+        (Dcapacity_liquid - Dcapacity_solid)/2*(temp**2 - 1.0_pr))
+    IF (.NOT.PRESENT(Dphi)) THEN
+      enthalpy = temp + Dcapacity_solid/2*temp**2 + before_phi*phi
+    ELSE
+      enthalpy = before_phi*Dphi
+    END IF
   END FUNCTION enthalpy
+
+  PURE FUNCTION enthalpy_equation (h, temp, is_D)
+    IMPLICIT NONE
+    REAL(pr), INTENT(IN) :: h, temp
+    INTEGER,  INTENT(IN), OPTIONAL :: is_D
+    REAL(pr) :: enthalpy_equation, phi, Dphi
+
+    phi = liquid_fraction(h)
+    Dphi = liquid_fraction(h, 1)
+    IF (.NOT.PRESENT(is_D)) THEN
+      enthalpy_equation = h - enthalpy(temp, phi)
+    ELSE
+      enthalpy_equation = 1.0_pr - enthalpy(temp, phi, Dphi)
+    END IF
+  END FUNCTION enthalpy_equation
 
   ELEMENTAL FUNCTION enthalpy_star (enthalpy, is_D)
     IMPLICIT NONE
-    REAL(pr),          INTENT(IN) :: enthalpy
-    INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL(pr), INTENT(IN) :: enthalpy
+    INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: enthalpy_star
 
     IF (.NOT.PRESENT(is_D)) THEN
@@ -869,15 +976,15 @@ CONTAINS
     END IF
   END FUNCTION enthalpy_star
 
-  ELEMENTAL FUNCTION Neumann_bc (enthalpy, porosity)
+  ELEMENTAL FUNCTION Neumann_bc (enthalpy, psi)
     IMPLICIT NONE
-    REAL(pr), INTENT(IN) :: enthalpy, porosity
+    REAL(pr), INTENT(IN) :: enthalpy, psi
     REAL(pr) :: Neumann_bc, temp, phi, Dh_star
 
     temp = temperature(enthalpy)
     phi = liquid_fraction(enthalpy)
     Dh_star = enthalpy_star(enthalpy, 1)
-    Neumann_bc = (1.0_pr - porosity) * conductivity(temp, phi) / capacity(temp, phi) * Dh_star
+    Neumann_bc = (1.0_pr - psi) * conductivity(temp, phi) / capacity(temp, phi) * Dh_star
   END FUNCTION Neumann_bc
 
   ELEMENTAL FUNCTION Dirichlet_bc (enthalpy)
@@ -892,8 +999,8 @@ CONTAINS
 
   ELEMENTAL FUNCTION other_heat_flux (temp, is_D)
     IMPLICIT NONE
-    REAL(pr),          INTENT(IN) :: temp
-    INTEGER, OPTIONAL, INTENT(IN) :: is_D
+    REAL(pr), INTENT(IN) :: temp
+    INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: other_heat_flux
 
     IF (.NOT.PRESENT(is_D)) THEN
@@ -959,24 +1066,33 @@ CONTAINS
     x2 = MINVAL(sgn*x(:,axis), MASK=mask)
     x2_loc = MINLOC(sgn*x(:,axis), MASK=mask)
     domain_bound = linear_interpolation(threshold, field(x1_loc(1)), field(x2_loc(1)), x1, x2)
-    IF (COUNT(mask).EQ.0 .OR. ABS(x2-x1).GT.min_distance) domain_bound = -1.0_pr/0.0_pr
+    IF (COUNT(mask).EQ.0 .OR. ABS(x2-x1).GT.min_distance) domain_bound = -HUGE(REAL(pr))
     CALL parallel_global_sum(REALMAXVAL=domain_bound)
     domain_bound = sgn*domain_bound
   END FUNCTION domain_bound
 
-  PURE FUNCTION Spline_cubic (r_p, l_p, fr_p, fl_p, dfr_p, dfl_p)
+  !
+  ! Find root of equation using the Newton algorithm
+  !
+  ! NB: Dummy procedures are not allowed as arguments in elemental functions,
+  !     but can be transfered to them as pointers to pure functions!
+  !
+  ! func_newton - global pointer to function with its derivative
+  ! x0          - initial guess
+  ! arg         - additional argument for func_newton
+  ELEMENTAL FUNCTION find_root (x0, arg) RESULT(x)
     IMPLICIT NONE
-    REAL(pr), INTENT(IN) :: r_p, l_p, fr_p, fl_p, dfr_p, dfl_p
-    REAL(pr) :: Spline_cubic(4)
-    !Spline_cubic(1,2,3,4) are coefficient of polynomial of 3rd degree [ax^3+bx^2+cx+d]
-    !where a = Spline_cubic(1) etc.
-    Spline_cubic(1)= (2*fl_p - 2*fr_p - dfl_p*l_p - dfr_p*l_p + dfl_p*r_p + dfr_p*r_p)/(r_p-l_p)**3
-    Spline_cubic(2) = (3*fr_p*l_p - 3*fl_p*l_p - 3*fl_p*r_p + 3*fr_p*r_p + dfl_p*l_p**2 &
-      + 2*dfr_p*l_p**2 - 2*dfl_p*r_p**2 - dfr_p*r_p**2 + dfl_p*l_p*r_p - dfr_p*l_p*r_p)/(r_p-l_p)**3
-    Spline_cubic(3) = (dfl_p*r_p**3 - dfr_p*l_p**3 + dfl_p*l_p*r_p**2 - 2*dfl_p*l_p**2*r_p &
-      + 2*dfr_p*l_p*r_p**2 - dfr_p*l_p**2*r_p + 6*fl_p*l_p*r_p - 6*fr_p*l_p*r_p)/(r_p-l_p)**3
-    Spline_cubic(4) = (r_p**3*(fl_p - dfl_p*l_p) + r_p*(dfr_p*l_p**3 + 3*fr_p*l_p**2) &
-      - fr_p*l_p**3 - r_p**2*(3*fl_p*l_p - dfl_p*l_p**2 + dfr_p*l_p**2))/(r_p-l_p)**3
-  END FUNCTION Spline_cubic
+    REAL(pr), INTENT(IN) :: x0, arg
+    REAL(pr) :: x, f
+    INTEGER  :: i
+    i = 0
+    x = x0
+    f = func_newton(x0, arg)
+    DO WHILE(ABS(f).GT.tol_newton .AND. i.LT.max_iter_newton)
+      x = x - f/func_newton(x, arg, 1)
+      f = func_newton(x, arg)
+      i = i + 1
+    END DO
+  END FUNCTION find_root
 
 END MODULE user_case
