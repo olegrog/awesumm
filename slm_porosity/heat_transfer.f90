@@ -21,16 +21,44 @@ MODULE user_case
   USE debug_vars
   !
   ! Style guide for the following user case:
-  !   1) use long names for global variables (two or more words) and short names for local ones
+  !   1) use long names for global variables (two or more words) and short names for local ones or of user types
   !   2) use ELEMENTAL and PURE function wherever possible
-  !   3) avoid code duplication completely as much as possible
+  !   3) avoid duplicating code as much as possible
   !   4) write 'IMPLICIT NONE' in all functions and subroutines
   !   5) avoid lines more than 120 symbols
   !   6) align column and comments
   !   7) prefer obvious names, otherwise add comments
-  !   8) prefer intermediate local variables and functions
+  !   8) prefer intermediate local variables and functions to multiline commands
   !
-  ! case specific variables
+
+  !
+  ! Case specific types
+  !
+  TYPE model3
+    REAL(pr) :: Dsolid, Dliquid, jump
+  END TYPE
+
+  TYPE model5
+    REAL(pr) :: Dsolid, D2solid, Dliquid, D2liquid, jump
+  END TYPE
+
+  ABSTRACT INTERFACE
+    ! NB: fortran prohibits creating pointers to elemental functions (only to pure),
+    !     but is possible to call a pure function from the elemental one
+    !     and it will be considered as elemental. Fortran's magic :)
+    PURE FUNCTION func_with_derivative(x, arg, is_D)
+      USE precision
+      IMPLICIT NONE
+      REAL(pr), INTENT (IN) :: x, arg
+      INTEGER,  INTENT (IN), OPTIONAL :: is_D
+      REAL(pr) :: func_with_derivative
+    END FUNCTION func_with_derivative
+  END INTERFACE
+
+  !
+  ! Case specific variables
+  !
+  ! indices for variables
   INTEGER n_var_enthalpy
   INTEGER n_var_porosity
   INTEGER n_var_diffus
@@ -45,12 +73,9 @@ MODULE user_case
   INTEGER,  DIMENSION(:),   ALLOCATABLE :: i_p_face
 
   ! thermophysical properties
-  REAL(pr) :: Dconductivity_solid
-  REAL(pr) :: Dconductivity_liquid
-  REAL(pr) :: conductivity_fusion
-  REAL(pr) :: Dcapacity_solid
-  REAL(pr) :: Dcapacity_liquid
-  REAL(pr) :: capacity_fusion
+  TYPE(model3) :: conductivity3
+  TYPE(model3) :: capacity3
+  TYPE(model5) :: enthalpy5
   REAL(pr) :: fusion_delta
   REAL(pr) :: fusion_heat
 
@@ -87,19 +112,6 @@ MODULE user_case
   REAL(pr) :: enthalpy_one           ! temp=1,        phi=1/2
   REAL(pr) :: enthalpy_L             ! temp=liquidus, phi=1
   REAL(pr) :: Dphi_one               ! maximum derivative of liquid fraction on enthalpy
-
-  ABSTRACT INTERFACE
-    ! NB: fortran prohibits creating pointers to elemental functions (only to pure),
-    !     but is possible to call a pure function from the elemental one
-    !     and it will be considered as elemental. Fortran's magic :)
-    PURE FUNCTION func_with_derivative(x, arg, is_D)
-      USE precision
-      IMPLICIT NONE
-      REAL(pr), INTENT (IN) :: x, arg
-      INTEGER,  INTENT (IN), OPTIONAL :: is_D
-      REAL(pr) :: func_with_derivative
-    END FUNCTION func_with_derivative
-  END INTERFACE
 
   PROCEDURE(func_with_derivative), POINTER :: func_newton => null()
 
@@ -509,7 +521,7 @@ CONTAINS
   END SUBROUTINE user_cal_force
 
   !
-  ! Read input from "case_name"_pde.inp file
+  ! Read input from "case_name".inp file
   ! case_name is in string file_name read from command line
   ! in read_command_line_input()
   !
@@ -517,17 +529,19 @@ CONTAINS
     IMPLICIT NONE
     CHARACTER(LEN=*), PARAMETER :: fmt_real = '(A30,F10.7)'
     CHARACTER(LEN=*), PARAMETER :: stars = REPEAT('*', 20)
-    REAL(pr) :: thickness
+    REAL(pr) :: thickness, Denthalpy_L
 
     ! thermophysical properties
-    call input_real('Dconductivity_solid', Dconductivity_solid, 'stop')
-    call input_real('Dconductivity_liquid', Dconductivity_liquid, 'stop')
-    call input_real('conductivity_fusion', conductivity_fusion, 'stop')
-    call input_real('Dcapacity_solid', Dcapacity_solid, 'stop')
-    call input_real('Dcapacity_liquid', Dcapacity_liquid, 'stop')
-    call input_real('capacity_fusion', capacity_fusion, 'stop')
+    call input_real('Dconductivity_solid', conductivity3%Dsolid, 'stop')
+    call input_real('Dconductivity_liquid', conductivity3%Dliquid, 'stop')
+    call input_real('conductivity_jump', conductivity3%jump, 'stop')
+    call input_real('Dcapacity_solid', capacity3%Dsolid, 'stop')
+    call input_real('Dcapacity_liquid', capacity3%Dliquid, 'stop')
+    call input_real('capacity_jump', capacity3%jump, 'stop')
     call input_real('fusion_delta', fusion_delta, 'stop')
     call input_real('fusion_heat', fusion_heat, 'stop')
+    Denthalpy_L = 1.0_pr + capacity3%Dsolid - capacity3%Dliquid + capacity3%jump
+    enthalpy5 = model5(1.0_pr, capacity3%Dsolid, Denthalpy_L, capacity3%Dliquid, fusion_heat)
 
     ! bed parameters
     call input_real('laser_power', laser_power, 'stop')
@@ -569,7 +583,7 @@ CONTAINS
       PRINT fmt_real, 'interface thickness =', thickness
     END IF
 
-    ! smooth solid-liquid interface
+    ! smooth the solid--liquid interface
     fusion_delta = fusion_delta*fusion_smoothing
 
     ! calculate the derived quantities
@@ -849,8 +863,8 @@ CONTAINS
 
     Dphi = liquid_fraction(enthalpy, 1)
     Dtemp = temperature(enthalpy, temp)
-    Dk_0 = conductivity(temp, phi, 1)*Dphi + conductivity(temp, phi, 2)*Dtemp
-    Dc_p = capacity(temp, phi, 1)*Dphi + capacity(temp, phi, 2)*Dtemp
+    Dk_0 = conductivity(temp, phi, 1)*Dtemp + conductivity(temp, phi, 2)*Dphi
+    Dc_p = capacity(temp, phi, 1)*Dtemp + capacity(temp, phi, 2)*Dphi
     pterm = (1.0_pr - psi) / (1.0_pr - initial_porosity)
 
     IF (.NOT.PRESENT(Dpsi)) THEN
@@ -867,8 +881,7 @@ CONTAINS
     INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: conductivity
 
-    conductivity = three_parameter_model(temp, phi, &
-      Dconductivity_solid, Dconductivity_liquid, conductivity_fusion, is_D)
+    conductivity = three_parameter_model(temp, phi, conductivity3, is_D)
   END FUNCTION conductivity
 
   ELEMENTAL FUNCTION capacity (temp, phi, is_D)
@@ -877,25 +890,47 @@ CONTAINS
     INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: capacity
 
-    capacity = three_parameter_model(temp, phi, &
-      Dcapacity_solid, Dcapacity_liquid, capacity_fusion, is_D)
+    capacity = three_parameter_model(temp, phi, capacity3, is_D)
   END FUNCTION capacity
 
-  ! is_D: 1 - partial derivative of liquid_fraction, 2 - partial derivative of temperature
-  ELEMENTAL FUNCTION three_parameter_model (temp, phi, Dsolid, Dliquid, jump, is_D)
+  ! if is_D present, return the partial derivative with respect to: 1 - temperature, 2 - liquid_fraction
+  ELEMENTAL FUNCTION three_parameter_model (temp, phi, m, is_D)
     IMPLICIT NONE
-    REAL(pr), INTENT(IN) :: temp, phi, Dsolid, Dliquid, jump
-    INTEGER,  INTENT(IN), OPTIONAL :: is_D
-    REAL(pr) :: three_parameter_model
+    REAL(pr),     INTENT(IN) :: temp, phi
+    TYPE(model3), INTENT(IN) :: m
+    INTEGER,      INTENT(IN), OPTIONAL :: is_D
+    REAL(pr) :: three_parameter_model, delta
 
+    delta = m%Dliquid - m%Dsolid
     IF (.NOT.PRESENT(is_D)) THEN
-      three_parameter_model = 1.0_pr + Dsolid*temp + (jump + (Dliquid - Dsolid)*(temp - 1.0_pr))*phi
+      three_parameter_model = 1.0_pr + m%Dsolid*temp + (m%jump + delta*(temp - 1.0_pr))*phi
     ELSE IF (is_D.EQ.1) THEN
-      three_parameter_model = jump + (Dliquid - Dsolid)*(temp - 1.0_pr)
+      three_parameter_model = m%Dsolid + delta*phi
     ELSE IF (is_D.EQ.2) THEN
-      three_parameter_model = Dsolid + (Dliquid - Dsolid)*phi
+      three_parameter_model = m%jump + delta*(temp - 1.0_pr)
     END IF
   END FUNCTION three_parameter_model
+
+  ! if is_D present, return the partial derivative with respect to: 1 - temperature, 2 - liquid_fraction
+  ELEMENTAL FUNCTION five_parameter_model (temp, phi, m, is_D)
+    IMPLICIT NONE
+    REAL(pr),     INTENT(IN) :: temp, phi
+    TYPE(model5), INTENT(IN) :: m
+    INTEGER,      INTENT(IN), OPTIONAL :: is_D
+    REAL(pr) :: five_parameter_model, delta, delta2, before_phi
+
+    delta = m%Dliquid - m%Dsolid
+    delta2 = m%D2liquid - m%D2solid
+    before_phi = m%jump + delta*(temp - 1.0_pr) + delta2*(temp**2 - 1.0_pr)/2
+
+    IF (.NOT.PRESENT(is_D)) THEN
+      five_parameter_model = m%Dsolid*temp + m%D2solid*temp**2/2 + before_phi*phi
+    ELSE IF (is_D.EQ.1) THEN
+      five_parameter_model = m%Dsolid + m%D2solid*temp + (delta + delta2*temp)*phi
+    ELSE IF (is_D.EQ.2) THEN
+      five_parameter_model = before_phi
+    END IF
+  END FUNCTION five_parameter_model
 
   ! return Dtemperature if the second argument is provided
   ELEMENTAL FUNCTION temperature (enthalpy, temp)
@@ -904,12 +939,12 @@ CONTAINS
     REAL(pr), INTENT(IN), OPTIONAL :: temp
     REAL(pr) :: temperature, h_star, phi, g1, g2, g3
     REAL(pr) :: Dh_star, Dphi, Dg1, Dg2, Dg3
+    REAL(pr) :: delta, delta2
 
     h_star = enthalpy_star(enthalpy)
     phi = liquid_fraction(enthalpy)
-    g1 = 1.0_pr + (Dcapacity_solid - Dcapacity_liquid + capacity_fusion)*phi
-    g2 = Dcapacity_solid*(1.0_pr - phi) + Dcapacity_liquid*phi
-    g3 = h_star + ((Dcapacity_solid - Dcapacity_liquid)/2 + capacity_fusion)*phi
+    delta = enthalpy5%Dliquid - enthalpy5%Dsolid; delta2 = enthalpy5%D2liquid - enthalpy5%D2solid
+    g1 = enthalpy5%Dsolid + delta*phi; g2 = enthalpy5%D2solid + delta2*phi; g3 = h_star + (delta + delta2/2)*phi
 
     IF (.NOT.PRESENT(temp)) THEN
       IF (g2.GE.eps_zero) THEN
@@ -920,9 +955,7 @@ CONTAINS
     ELSE
       Dh_star = enthalpy_star(enthalpy, 1)
       Dphi = liquid_fraction(enthalpy, 1)
-      Dg1 = (Dcapacity_solid - Dcapacity_liquid + capacity_fusion)*Dphi
-      Dg2 = (Dcapacity_liquid - Dcapacity_solid)*Dphi
-      Dg3 = Dh_star + ((Dcapacity_solid - Dcapacity_liquid)/2 + capacity_fusion)*Dphi
+      Dg1 = delta*Dphi; Dg2 = delta2*Dphi; Dg3 = Dh_star + (delta + delta2/2)*Dphi
       IF (g2.GE.eps_zero) THEN
         temperature = (Dg3 - Dg1*temp - Dg2*(temp**2)/2) / (g2*temp + g1)
       ELSE
@@ -931,21 +964,14 @@ CONTAINS
     END IF
   END FUNCTION temperature
 
-  ! return Denthalpy if the third argument is provided
-  ELEMENTAL FUNCTION enthalpy (temp, phi, Dphi)
+  ! if is_D present, return the partial derivative with respect to: 1 - temperature, 2 - liquid_fraction
+  ELEMENTAL FUNCTION enthalpy (temp, phi, is_D)
     IMPLICIT NONE
     REAL(pr), INTENT(IN) :: temp, phi
-    REAL(pr),  INTENT(IN), OPTIONAL :: Dphi
-    REAL(pr) :: enthalpy, before_phi
+    INTEGER,  INTENT(IN), OPTIONAL :: is_D
+    REAL(pr) :: enthalpy
 
-    before_phi = (fusion_heat + &
-        (Dcapacity_solid - Dcapacity_liquid + capacity_fusion)*(temp - 1.0_pr) + &
-        (Dcapacity_liquid - Dcapacity_solid)/2*(temp**2 - 1.0_pr))
-    IF (.NOT.PRESENT(Dphi)) THEN
-      enthalpy = temp + Dcapacity_solid/2*temp**2 + before_phi*phi
-    ELSE
-      enthalpy = before_phi*Dphi
-    END IF
+    enthalpy = five_parameter_model(temp, phi, enthalpy5, is_D)
   END FUNCTION enthalpy
 
   PURE FUNCTION enthalpy_equation (h, temp, is_D)
@@ -959,7 +985,7 @@ CONTAINS
     IF (.NOT.PRESENT(is_D)) THEN
       enthalpy_equation = h - enthalpy(temp, phi)
     ELSE
-      enthalpy_equation = 1.0_pr - enthalpy(temp, phi, Dphi)
+      enthalpy_equation = 1.0_pr - enthalpy(temp, phi, 2)*Dphi
     END IF
   END FUNCTION enthalpy_equation
 
