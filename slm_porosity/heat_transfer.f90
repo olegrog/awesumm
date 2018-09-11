@@ -210,7 +210,7 @@ CONTAINS
       u(:,n_var_enthalpy) = enthalpy(temp, lf_from_temperature(temp))
       !   b) update it by solving the corresponding equation
       func_newton => enthalpy_equation
-      u(:,n_var_enthalpy) = find_root(u(:,n_var_enthalpy), u(:,n_var_temp))
+      u(:,n_var_enthalpy) = find_root(u(:,n_var_enthalpy), temp)
     END IF
   END SUBROUTINE user_initial_conditions
 
