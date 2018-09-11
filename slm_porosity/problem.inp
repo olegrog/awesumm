@@ -126,10 +126,10 @@ domain_imbalance_tol = 0.1, 0.85, 0.95
 # thermophysical properties
 Dconductivity_solid = 1.329e+00
 Dconductivity_liquid = 1.898e+00
-conductivity_fusion = -4.374e-01
+conductivity_jump = -4.374e-01
 Dcapacity_solid = 5.671e-01
 Dcapacity_liquid = 0
-capacity_fusion = 2.025e-01
+capacity_jump = 2.025e-01
 fusion_delta = 3.663e-02                    # = liquidus - solidus
 fusion_heat = 4.061e-01                     # latent heat of fusion
 
