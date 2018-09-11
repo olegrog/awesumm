@@ -29,7 +29,8 @@ MODULE user_case
   !   6) align column and comments
   !   7) prefer obvious names, otherwise add comments
   !   8) prefer intermediate local variables and functions to multiline commands
-  !   9) use ' instead of "
+  !   9) define local variables after the procedure/function signature
+  !   10) use ' instead of "
   !
 
   !
@@ -82,12 +83,15 @@ MODULE user_case
   REAL(pr) :: fusion_heat
 
   ! bed parameters
-  REAL(pr) :: laser_power
-  REAL(pr) :: scanning_speed
   REAL(pr) :: initial_porosity
   REAL(pr) :: convective_transfer
   REAL(pr) :: radiative_transfer
   REAL(pr) :: absolute_temperature
+
+  ! laser parameters
+  REAL(pr) :: laser_power
+  REAL(pr) :: scanning_speed
+  REAL(pr) :: laser_beam_depth
 
   ! macroscopic model parameters
   REAL(pr) :: absorptivity
@@ -112,6 +116,8 @@ MODULE user_case
   INTEGER  :: thickness_points
   INTEGER  :: j_mx_porosity
   REAL(pr) :: cfl_fusion_factor
+  LOGICAL  :: laser_as_bc
+  LOGICAL  :: half_domain
 
   ! derived quantities
   REAL(pr) :: enthalpy_S             ! temp=solidus,  phi=0
@@ -256,7 +262,7 @@ CONTAINS
         IF (ANY( face(1:dim) /= 0) .AND. ie == n_var_enthalpy) THEN
           CALL get_all_indices_by_face(face_type, jlev, nloc, iloc)
           IF (nloc > 0) THEN
-            IF (dim == 3 .AND. face(2) < 0) THEN
+            IF (half_domain .AND. dim == 3 .AND. face(2) < 0) THEN
               Lu(shift+iloc(1:nloc)) = du(ie, iloc(1:nloc), 2)
             ELSEIF (face(dim) > 0) THEN
               Lu(shift+iloc(1:nloc)) = &
@@ -288,7 +294,7 @@ CONTAINS
         IF (ANY( face(1:dim) /= 0) .AND. ie == n_var_enthalpy) THEN
           CALL get_all_indices_by_face(face_type, jlev, nloc, iloc)
           IF (nloc > 0) THEN
-            IF (dim == 3 .AND. face(2) < 0) THEN
+            IF (half_domain .AND. dim == 3 .AND. face(2) < 0) THEN
               Lu_diag(shift+iloc(1:nloc)) = du(iloc(1:nloc), 2)
             ELSEIF (face(dim) > 0) THEN
               Lu_diag(shift+iloc(1:nloc)) = &
@@ -317,13 +323,15 @@ CONTAINS
         IF (ANY( face(1:dim) /= 0) .AND. ie == n_var_enthalpy) THEN
           CALL get_all_indices_by_face(face_type, jlev, nloc, iloc)
           IF (nloc > 0) THEN
-            IF (dim == 3 .AND. face(2) < 0) THEN
+            IF (half_domain .AND. dim == 3 .AND. face(2) < 0) THEN
               rhs(shift+iloc(1:nloc)) = 0
             ELSEIF (face(dim) > 0) THEN
-              rhs(shift+iloc(1:nloc)) = &
-                laser_heat_flux(psi_prev(iloc(1:nloc)))*laser_distribution(x(iloc(1:nloc),:), nloc) - &
-                other_heat_flux(temp_prev(iloc(1:nloc))) + &
+              rhs(shift+iloc(1:nloc)) = -other_heat_flux(temp_prev(iloc(1:nloc))) + &
                 other_heat_flux(temp_prev(iloc(1:nloc)), 1) * Dtemp_prev(iloc(1:nloc))*enthalpy_prev(iloc(1:nloc))
+              IF (laser_as_bc) THEN
+                rhs(shift+iloc(1:nloc)) = rhs(shift+iloc(1:nloc)) + &
+                  laser_heat_flux(psi_prev(iloc(1:nloc)))*laser_distribution(x(iloc(1:nloc),:), nloc)
+              END IF
             ELSE
               rhs(shift+iloc(1:nloc)) = 0
             END IF
@@ -373,6 +381,9 @@ CONTAINS
       CALL c_diff_fast(for_d2u, d2u, d2u_dummy, j_lev, ng, div_meth(meth), 10, dim, 1, dim)
       DO i = 1, dim
         user_rhs(shift+1:shift+ng) = user_rhs(shift+1:shift+ng) + d2u(i,:,i)
+        IF (.NOT.laser_as_bc) THEN
+         user_rhs(shift+1:shift+ng) = user_rhs(shift+1:shift+ng) + laser_heat_source(x, ng)
+        END IF
       END DO
     END IF
   END FUNCTION user_rhs
@@ -471,14 +482,14 @@ CONTAINS
     REAL(pr) :: volume                 ! volume of the melting pool
     REAL(pr) :: width, length, depth   ! dimensions of the melting pool
     REAL(pr) :: phi(nwlt), h_arr(dim,nwlt), vars(dim+3)
-    REAL(pr) :: xmin, xmax, ymax, zmin, h_max
+    REAL(pr) :: xmin, xmax, ymax, zmin, h_max, enthalpy_sum
     REAL(pr), PARAMETER :: threshold = 0.5_pr
     CHARACTER(LEN=200) :: melting_pool, header, columns
 
     melting_pool = TRIM(res_path)//'melting_pool.txt'
     IF (startup_flag.EQ.0) THEN
       IF (par_rank.EQ.0) THEN
-        header = '# time      max_temp    volume      length      depth'
+        header = '# time      max_temp    volume      length      depth      enthalpy_sum'
         IF (dim.EQ.3) header = TRIM(header) // '       width'
         OPEN(555, FILE=melting_pool, STATUS='replace', ACTION='write')
         WRITE(555, *) TRIM(header)
@@ -490,7 +501,9 @@ CONTAINS
       phi = u(:,n_var_lfrac)
       volume = SUM(phi*dA)
       max_temp = MAXVAL(temp_prev)
+      enthalpy_sum = SUM(u(:,n_var_enthalpy)*dA)
       CALL parallel_global_sum(REAL=volume)
+      CALL parallel_global_sum(REAL=enthalpy_sum)
       CALL parallel_global_sum(REALMAXVAL=max_temp)
 
       xmin = domain_bound(phi, threshold, 1,   -1, h_max)
@@ -503,8 +516,8 @@ CONTAINS
       depth = xyzlimits(2,dim) - zmin
 
       IF (par_rank.EQ.0) THEN
-        columns = '(10(ES10.3, 2x))'
-        vars = (/ t, max_temp, volume, length, depth /)
+        columns = '(12(ES12.3, 2x))'
+        vars = (/ t, max_temp, volume, length, depth, enthalpy_sum/)
         IF (dim.EQ.3) vars(SIZE(vars)) = width
         OPEN(555, FILE=melting_pool, STATUS='old', POSITION='append', ACTION='write')
         WRITE(555, TRIM(columns)) vars
@@ -554,12 +567,15 @@ CONTAINS
     enthalpy5 = model5(1.0_pr, capacity3%Dsolid, Denthalpy_L, capacity3%Dliquid, fusion_heat)
 
     ! bed parameters
-    call input_real('laser_power', laser_power, 'stop')
-    call input_real('scanning_speed', scanning_speed, 'stop')
     call input_real('initial_porosity', initial_porosity, 'stop')
     call input_real('convective_transfer', convective_transfer, 'stop')
     call input_real('radiative_transfer', radiative_transfer, 'stop')
     call input_real('absolute_temperature', absolute_temperature, 'stop')
+
+    ! laser parameters
+    call input_real('laser_power', laser_power, 'stop')
+    call input_real('scanning_speed', scanning_speed, 'stop')
+    call input_real('laser_beam_depth', laser_beam_depth, 'stop')
 
     ! macroscopic model parameters
     call input_real('absorptivity', absorptivity, 'stop')
@@ -584,6 +600,8 @@ CONTAINS
     call input_integer('thickness_points', thickness_points, 'stop')
     call input_integer('j_mx_porosity', j_mx_porosity, 'stop')
     call input_real('cfl_fusion_factor', cfl_fusion_factor, 'stop')
+    call input_logical('laser_as_bc', laser_as_bc, 'stop')
+    call input_logical('half_domain', half_domain, 'stop')
 
     ! calculate the real quantities
     enthalpy_S = enthalpy(1.0_pr - fusion_delta/2, 0.0_pr)
@@ -780,6 +798,9 @@ CONTAINS
     REAL(pr), DIMENSION(dim) :: max_grad_temp, thickness, resolution
     LOGICAL :: interface_mask(nwlt)
 
+    IF ((.NOT.half_domain .AND. dim.EQ.3) .AND. &
+      (initial_laser_position(2).LE.xyzlimits(1,2) .OR. initial_laser_position(2).GE.xyzlimits(2,2))) &
+      STOP 'Please check your laser position and domain boundary'
     ! 1. Use the calculated (from the enthalpy) values instead of the interpolated ones
     h = u(:,n_var_enthalpy)
     h_star = enthalpy_star(h)
@@ -1116,13 +1137,40 @@ CONTAINS
     laser_distribution = EXP(-SUM(factor_*(x_-x_center)**2, 2))/pi**(.5*(dim-1))
   END FUNCTION laser_distribution
 
+  FUNCTION laser_heat_source (x_, nlocal)
+    IMPLICIT NONE
+    REAL(pr), INTENT(IN) :: x_(nlocal,dim)
+    INTEGER,  INTENT(IN) :: nlocal
+    REAL(pr) :: laser_heat_source(nlocal)
+    REAL(pr) :: halfwidth(dim), position(dim)
+    INTEGER  :: i
+
+    position = laser_position(t)
+    halfwidth = 1.0_pr
+    halfwidth(dim) = laser_beam_depth
+    laser_heat_source = 2*laser_heat_flux(psi_prev)
+    DO i = 1, dim
+      laser_heat_source = laser_heat_source* &
+        laser_gaussian(x_(:,i), nlocal, position(i), halfwidth(i), 1.0_pr)
+    END DO
+  END FUNCTION laser_heat_source
+
+  FUNCTION laser_gaussian (coordinate, nlocal, position, halfwidth, factor)
+    IMPLICIT NONE
+    REAL(pr), INTENT(IN) :: coordinate(nlocal)
+    INTEGER,  INTENT(IN) :: nlocal
+    REAL(pr) :: position, halfwidth, factor
+    REAL(pr) :: laser_gaussian(nlocal)
+
+    laser_gaussian = EXP(-factor*((coordinate - position)/halfwidth)**2)*sqrt(factor)/(pi**0.5_pr*halfwidth)
+  END FUNCTION laser_gaussian
+
   PURE FUNCTION laser_position (time)
     IMPLICIT NONE
     REAL(pr), INTENT(IN) :: time
     REAL(pr) :: laser_position(dim)
     ! NB: (:) cannot be removed
     laser_position(:) = initial_laser_position(:dim)
-    laser_position(dim) = xyzlimits(2, dim)
     laser_position(1) = laser_position(1) + scanning_speed*time
   END FUNCTION laser_position
 
@@ -1174,6 +1222,7 @@ CONTAINS
     REAL(pr), INTENT(IN) :: x0, arg
     REAL(pr) :: root, f
     INTEGER  :: i
+
     i = 0
     root = x0
     f = func_newton(x0, arg)

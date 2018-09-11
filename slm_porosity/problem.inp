@@ -41,8 +41,8 @@ J_MN       = 2
 J_MX       = 9
 
 ### Computational domain
-coord_min      = -5.0,    0.0,   -5.0       # XMIN, YMIN, ZMIN, etc
-coord_max      =  25.0,   5.0,    0.0       # XMAX, YMAX, ZMAX, etc
+coord_min      = -5.0,    -5.0,   -5.0       # XMIN, YMIN, ZMIN, etc
+coord_max      =  25.0,    0.0,    0.0       # XMAX, YMAX, ZMAX, etc
 coord_zone_min = -5e+02, -6e+02, -7e+02     # XMINzone, etc
 coord_zone_max =  5e+02,  6e+02,  7e+02     # XMAXzone, etc
 
@@ -134,12 +134,15 @@ fusion_delta = 3.663e-02                    # = liquidus - solidus
 fusion_heat = 4.061e-01                     # latent heat of fusion
 
 # bed parameters
-laser_power = 7.278e+01
-scanning_speed = 9.076e-01
 initial_porosity = 0.4
 convective_transfer = 2.434e-05
 radiative_transfer = 3.510e-04
 absolute_temperature = 2.148e-01
+
+# laser parameters
+laser_power = 7.278e+01
+scanning_speed = 9.076e-01
+laser_beam_depth = 0.5                      # in internal heating source only
 
 # macroscopic model parameters
 absorptivity = 0.3
@@ -160,7 +163,9 @@ lfrac_scale = 10                            # scale factor for mesh adaptation
 power_factor_2d = 0.3                       # laser power factor for the 2D problem
 tol_newton = 1e-6                           # tolerance for root finding algorithm
 max_iter_newton = 10                        # maximum number of iterations for root finding algorithm
-check_resolution = T                        # if true, abort program in case of the unsifficient mesh resolution
+check_resolution = T                        # if true, abort program in case of the insufficient mesh resolution
 thickness_points = 8                        # minimum number of points inside the solid--liquid interface thickness
 j_mx_porosity = 7                           # J_MX for porosity
 cfl_fusion_factor = 2                       # the time step will be reduced this number of times
+laser_as_bc = T                             # T - laser as BC, F - internal heating source
+half_domain = T                             # T - symmetry across laser movement axis, F - no symmetry
