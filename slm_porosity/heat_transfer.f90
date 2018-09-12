@@ -29,6 +29,7 @@ MODULE user_case
   !   6) align column and comments
   !   7) prefer obvious names, otherwise add comments
   !   8) prefer intermediate local variables and functions to multiline commands
+  !   9) use ' instead of "
   !
 
   !
@@ -106,12 +107,15 @@ MODULE user_case
   REAL(pr) :: power_factor_2d
   REAL(pr) :: tol_newton
   INTEGER  :: max_iter_newton
+  INTEGER  :: thickness_points
+  LOGICAL  :: check_resolution
 
   ! derived quantities
   REAL(pr) :: enthalpy_S             ! temp=solidus,  phi=0
   REAL(pr) :: enthalpy_one           ! temp=1,        phi=1/2
   REAL(pr) :: enthalpy_L             ! temp=liquidus, phi=1
   REAL(pr) :: Dphi_one               ! maximum derivative of liquid fraction on enthalpy
+  REAL(pr) :: interface_thickness    ! the solid--liquid interface thickness
 
   PROCEDURE(func_with_derivative), POINTER :: func_newton => null()
 
@@ -493,7 +497,7 @@ CONTAINS
       depth = xyzlimits(2,dim) - zmin
 
       IF (par_rank.EQ.0) THEN
-        columns = '(' // REPEAT('ES10.3, 2x', SIZE(vars)) // ')'
+        columns = '(10(ES10.3, 2x))'
         vars = (/ t, max_temp, volume, length, depth /)
         IF (dim.EQ.3) vars(SIZE(vars)) = width
         OPEN(555, FILE=melting_pool, STATUS='old', POSITION='append', ACTION='write')
@@ -529,7 +533,7 @@ CONTAINS
     IMPLICIT NONE
     CHARACTER(LEN=*), PARAMETER :: fmt_real = '(A30,F10.7)'
     CHARACTER(LEN=*), PARAMETER :: stars = REPEAT('*', 20)
-    REAL(pr) :: thickness, Denthalpy_L
+    REAL(pr) :: Denthalpy_L
 
     ! thermophysical properties
     call input_real('Dconductivity_solid', Dconductivity_solid, 'stop')
@@ -570,17 +574,19 @@ CONTAINS
     call input_real('power_factor_2d', power_factor_2d, 'stop')
     call input_real('tol_newton', tol_newton, 'stop')
     call input_integer('max_iter_newton', max_iter_newton, 'stop')
+    call input_integer('thickness_points', thickness_points, 'stop')
+    call input_logical('check_resolution', check_resolution, 'stop')
 
     ! calculate the real quantities
     enthalpy_S = enthalpy(1.0_pr - fusion_delta/2, 0.0_pr)
     enthalpy_L = enthalpy(1.0_pr + fusion_delta/2, 1.0_pr)
-    thickness = (enthalpy_L - enthalpy_S - fusion_heat)/capacity(1.0_pr, 0.5_pr)
+    interface_thickness = (enthalpy_L - enthalpy_S - fusion_heat)/capacity(1.0_pr, 0.5_pr)
 
     IF (par_rank.EQ.0) THEN
       PRINT *, stars, ' Real quantities ', stars
       PRINT fmt_real, 'enthalpy_S =', enthalpy_S
       PRINT fmt_real, 'enthalpy_L =', enthalpy_L
-      PRINT fmt_real, 'interface thickness =', thickness
+      PRINT fmt_real, 'interface thickness =', interface_thickness
     END IF
 
     ! smooth the solid--liquid interface
@@ -591,7 +597,7 @@ CONTAINS
     enthalpy_one = enthalpy(1.0_pr, 0.5_pr)
     enthalpy_L = enthalpy(1.0_pr + fusion_delta/2, 1.0_pr)
     Dphi_one = 1.0_pr/(enthalpy_L - enthalpy_S)
-    thickness = (enthalpy_L - enthalpy_S - fusion_heat)/capacity(1.0_pr, 0.5_pr)
+    interface_thickness = (enthalpy_L - enthalpy_S - fusion_heat)/capacity(1.0_pr, 0.5_pr)
 
     IF (par_rank.EQ.0) THEN
       PRINT *, stars, ' Computational quantities ', stars
@@ -601,7 +607,7 @@ CONTAINS
       PRINT fmt_real, 'Dphi(1) =', Dphi_one
       PRINT fmt_real, 'capacity(1) =', capacity(1.0_pr, 0.5_pr)
       PRINT fmt_real, 'conductivity(1) =', conductivity(1.0_pr, 0.5_pr)
-      PRINT fmt_real, 'interface thickness =', thickness
+      PRINT fmt_real, 'interface thickness =', interface_thickness
     END IF
   END SUBROUTINE user_read_input
 
@@ -740,12 +746,14 @@ CONTAINS
 
   SUBROUTINE user_pre_process
     IMPLICIT NONE
+    INTEGER, PARAMETER :: meth = 1, nvar = 2
     REAL(pr), DIMENSION(nwlt) :: h, h_star, phi, psi, temp
     REAL(pr), DIMENSION(nwlt) :: Dphi, Dpsi, Dtemp
-    REAL(pr), DIMENSION(nwlt,n_integrated)     :: for_du
-    REAL(pr), DIMENSION(n_integrated,nwlt,dim) :: du, du_dummy
-    INTEGER, PARAMETER :: meth = 1
+    REAL(pr), DIMENSION(nwlt,nvar)     :: for_du
+    REAL(pr), DIMENSION(nvar,nwlt,dim) :: du, du_dummy
+    REAL(pr), DIMENSION(dim) :: max_grad_temp, thickness, resolution
 
+    ! 1. Use the calculated (from the enthalpy) values instead of the interpolated ones
     h = u(:,n_var_enthalpy)
     h_star = enthalpy_star(h)
     phi = liquid_fraction(h)
@@ -755,10 +763,17 @@ CONTAINS
     Dphi = liquid_fraction(h, 1)
     Dpsi = porosity(u(:,n_var_porosity), phi, Dphi)
 
+    ! NB: 1) ng is not equal to nwlt after mesh adaptation
+    !     2) ne is not equal to n_integrated until first call of time integration method
+    for_du = RESHAPE((/ h_star, temp /), SHAPE(for_du))
+    CALL c_diff_fast(for_du, du, du_dummy, j_lev, nwlt, grad_meth(meth), 10, nvar, 1, nvar)
+
+    ! 2. Store the calculated variables as global variables with suffix "_prev"
     ! quantities used in DRHS
     CALL reallocate_scalar(diffusivity_prev); diffusivity_prev = diffusivity(h, psi)
     CALL reallocate_scalar(Ddiffusivity_prev); Ddiffusivity_prev = diffusivity(h, psi, Dpsi)
     CALL reallocate_scalar(Dh_star_prev); Dh_star_prev = enthalpy_star(h, 1)
+    CALL reallocate_vector(grad_h_star_prev); grad_h_star_prev = du(1,:,:)
 
     ! quantities used in algebraic BC
     CALL reallocate_scalar(enthalpy_prev); enthalpy_prev = h
@@ -766,15 +781,25 @@ CONTAINS
     CALL reallocate_scalar(Dtemp_prev); Dtemp_prev = temperature(h, temp)
     CALL reallocate_scalar(psi_prev); psi_prev = psi
 
-    ! NB: 1) ng is not equal to nwlt after mesh adaptation
-    !     2) ne is not equal to n_integrated until first call of time integration method
-    for_du = RESHAPE((/ h_star /), SHAPE(for_du))
-    CALL c_diff_fast(for_du, du, du_dummy, j_lev, nwlt, grad_meth(meth), 10, n_integrated, 1, n_integrated)
-    CALL reallocate_vector(grad_h_star_prev); grad_h_star_prev = du(1,:,:)
+
+    ! 3. Check if J_MX provides a sufficient resolution for solid--liquid interface thickness
+    IF (check_resolution) THEN
+      max_grad_temp = MAXVAL(ABS(du(2,:,:)), 1)
+      CALL parallel_vector_sum(REALMAXVAL=max_grad_temp, LENGTH=dim)
+      thickness = interface_thickness/max_grad_temp
+      resolution = (xyzlimits(2,:) - xyzlimits(1,:)) / (mxyz*2**j_mx)
+      IF (par_rank.EQ.0) THEN
+        WRITE(*, '(A35, 3ES10.2)') 'The minimum interface thickness =', thickness
+        WRITE(*, '(A35, 3ES10.2)') 'The minimum mesh step =', resolution
+        WRITE(*, '(A35, 3ES10.2)') 'Their ratio =', thickness/resolution
+      END IF
+      IF (ANY(thickness.LT.resolution*thickness_points)) STOP '--- Insufficient resolution ---'
+    END IF
   END SUBROUTINE user_pre_process
 
   SUBROUTINE user_post_process
     IMPLICIT NONE
+
     IF (ISNAN(SUM(u))) STOP '--- NaN in user_post_process ---'
     IF (scanning_speed*t.GE.(xyzlimits(1,1) + xyzlimits(2,1))) STOP '--- Finished ---'
   END SUBROUTINE user_post_process
