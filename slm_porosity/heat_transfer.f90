@@ -228,14 +228,14 @@ CONTAINS
     REAL(pr), DIMENSION(ne_local,nlocal,dim) :: du, d2u
     INTEGER :: face(dim), iloc(nwlt)
 
-    CALL c_diff_fast (u_in, du, d2u, jlev, nlocal, grad_meth(meth), 10, ne_local, 1, ne_local)
+    CALL c_diff_fast(u_in, du, d2u, jlev, nlocal, grad_meth(meth), 10, ne_local, 1, ne_local)
 
     DO ie = 1, ne_local
       shift = nlocal*(ie-1)
       DO face_type = 0, 3**dim - 1
         face = INT(MOD(face_type, i_p_face(1:dim))/i_p_face(0:dim-1))-1
         IF (ANY( face(1:dim) /= 0) .AND. ie == n_var_enthalpy) THEN
-          CALL get_all_indices_by_face (face_type, jlev, nloc, iloc)
+          CALL get_all_indices_by_face(face_type, jlev, nloc, iloc)
           IF (nloc > 0) THEN
             IF (face(dim) > 0) THEN
               Lu(shift+iloc(1:nloc)) = &
@@ -260,14 +260,14 @@ CONTAINS
     REAL(pr), DIMENSION(nlocal,dim) :: du, d2u
     INTEGER :: face(dim), iloc(nwlt)
 
-    CALL c_diff_diag (du, d2u, jlev, nlocal, grad_meth(meth), div_meth(meth), -10)
+    CALL c_diff_diag(du, d2u, jlev, nlocal, grad_meth(meth), div_meth(meth), -10)
 
     DO ie = 1, ne_local
       shift = nlocal*(ie-1)
       DO face_type = 0, 3**dim - 1
         face = INT(MOD(face_type, i_p_face(1:dim))/i_p_face(0:dim-1))-1
         IF (ANY( face(1:dim) /= 0) .AND. ie == n_var_enthalpy) THEN
-          CALL get_all_indices_by_face (face_type, jlev, nloc, iloc)
+          CALL get_all_indices_by_face(face_type, jlev, nloc, iloc)
           IF (nloc > 0) THEN
             IF (face(dim) > 0) THEN
               Lu_diag(shift+iloc(1:nloc)) = &
@@ -296,7 +296,7 @@ CONTAINS
       DO face_type = 0, 3**dim - 1
         face = INT(MOD(face_type, i_p_face(1:dim))/i_p_face(0:dim-1))-1
         IF (ANY( face(1:dim) /= 0) .AND. ie == n_var_enthalpy) THEN
-          CALL get_all_indices_by_face (face_type, jlev, nloc, iloc)
+          CALL get_all_indices_by_face(face_type, jlev, nloc, iloc)
           IF (nloc > 0) THEN
             IF (face(dim) > 0) THEN
               rhs(shift+iloc(1:nloc)) = &
@@ -463,7 +463,7 @@ CONTAINS
         CLOSE(555)
       END IF
     ELSE
-      CALL get_all_local_h (h_arr)
+      CALL get_all_local_h(h_arr)
       h_max = MAXVAL(h_arr)
       phi = u(:,n_var_lfrac)
       volume = SUM(phi*dA)
@@ -520,42 +520,42 @@ CONTAINS
     REAL(pr) :: thickness
 
     ! thermophysical properties
-    call input_real ('Dconductivity_solid', Dconductivity_solid, 'stop')
-    call input_real ('Dconductivity_liquid', Dconductivity_liquid, 'stop')
-    call input_real ('conductivity_fusion', conductivity_fusion, 'stop')
-    call input_real ('Dcapacity_solid', Dcapacity_solid, 'stop')
-    call input_real ('Dcapacity_liquid', Dcapacity_liquid, 'stop')
-    call input_real ('capacity_fusion', capacity_fusion, 'stop')
-    call input_real ('fusion_delta', fusion_delta, 'stop')
-    call input_real ('fusion_heat', fusion_heat, 'stop')
+    call input_real('Dconductivity_solid', Dconductivity_solid, 'stop')
+    call input_real('Dconductivity_liquid', Dconductivity_liquid, 'stop')
+    call input_real('conductivity_fusion', conductivity_fusion, 'stop')
+    call input_real('Dcapacity_solid', Dcapacity_solid, 'stop')
+    call input_real('Dcapacity_liquid', Dcapacity_liquid, 'stop')
+    call input_real('capacity_fusion', capacity_fusion, 'stop')
+    call input_real('fusion_delta', fusion_delta, 'stop')
+    call input_real('fusion_heat', fusion_heat, 'stop')
 
     ! bed parameters
-    call input_real ('laser_power', laser_power, 'stop')
-    call input_real ('scanning_speed', scanning_speed, 'stop')
-    call input_real ('initial_porosity', initial_porosity, 'stop')
-    call input_real ('convective_transfer', convective_transfer, 'stop')
-    call input_real ('radiative_transfer', radiative_transfer, 'stop')
-    call input_real ('absolute_temperature', absolute_temperature, 'stop')
+    call input_real('laser_power', laser_power, 'stop')
+    call input_real('scanning_speed', scanning_speed, 'stop')
+    call input_real('initial_porosity', initial_porosity, 'stop')
+    call input_real('convective_transfer', convective_transfer, 'stop')
+    call input_real('radiative_transfer', radiative_transfer, 'stop')
+    call input_real('absolute_temperature', absolute_temperature, 'stop')
 
     ! macroscopic model parameters
-    call input_real ('absorptivity', absorptivity, 'stop')
-    call input_real ('emissivity', emissivity, 'stop')
+    call input_real('absorptivity', absorptivity, 'stop')
+    call input_real('emissivity', emissivity, 'stop')
 
     ! initial conditions
-    call input_real ('initial_temp', initial_temp, 'stop')
-    call input_real ('initial_pool_radius', initial_pool_radius, 'stop')
-    call input_real_vector ('initial_laser_position', initial_laser_position, 3, 'stop')
-    call input_real ('powder_depth', powder_depth, 'stop')
+    call input_real('initial_temp', initial_temp, 'stop')
+    call input_real('initial_pool_radius', initial_pool_radius, 'stop')
+    call input_real_vector('initial_laser_position', initial_laser_position, 3, 'stop')
+    call input_real('powder_depth', powder_depth, 'stop')
 
     ! numerics-specific parameters
-    call input_integer ('smoothing_method', smoothing_method, 'stop')
-    call input_real ('fusion_smoothing', fusion_smoothing, 'stop')
-    call input_real ('powder_smoothing', powder_smoothing, 'stop')
-    call input_real ('eps_zero', eps_zero, 'stop')
-    call input_real ('lfrac_scale', lfrac_scale, 'stop')
-    call input_real ('power_factor_2d', power_factor_2d, 'stop')
-    call input_real ('tol_newton', tol_newton, 'stop')
-    call input_integer ('max_iter_newton', max_iter_newton, 'stop')
+    call input_integer('smoothing_method', smoothing_method, 'stop')
+    call input_real('fusion_smoothing', fusion_smoothing, 'stop')
+    call input_real('powder_smoothing', powder_smoothing, 'stop')
+    call input_real('eps_zero', eps_zero, 'stop')
+    call input_real('lfrac_scale', lfrac_scale, 'stop')
+    call input_real('power_factor_2d', power_factor_2d, 'stop')
+    call input_real('tol_newton', tol_newton, 'stop')
+    call input_integer('max_iter_newton', max_iter_newton, 'stop')
 
     ! calculate the real quantities
     enthalpy_S = enthalpy(1.0_pr - fusion_delta/2, 0.0_pr)
@@ -666,7 +666,7 @@ CONTAINS
     REAL(pr) :: h_arr(dim,nwlt), cfl_laser, cfl_diffusive
 
     use_default = .FALSE.
-    CALL get_all_local_h (h_arr)
+    CALL get_all_local_h(h_arr)
     cfl_laser = MAXVAL(dt/h_arr(1,:)*scanning_speed)
     cfl_diffusive = MAXVAL(dt/SUM(h_arr**2, 1)/diffusivity_prev) / (1.0_pr - fusion_heat*Dphi_one)
     CALL parallel_global_sum(REALMAXVAL=cfl_laser)
