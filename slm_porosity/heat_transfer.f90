@@ -752,6 +752,7 @@ CONTAINS
     REAL(pr), DIMENSION(nwlt,nvar)     :: for_du
     REAL(pr), DIMENSION(nvar,nwlt,dim) :: du, du_dummy
     REAL(pr), DIMENSION(dim) :: max_grad_temp, thickness, resolution
+    LOGICAL :: interface_mask(nwlt)
 
     ! 1. Use the calculated (from the enthalpy) values instead of the interpolated ones
     h = u(:,n_var_enthalpy)
@@ -784,16 +785,19 @@ CONTAINS
 
     ! 3. Check if J_MX provides a sufficient resolution for solid--liquid interface thickness
     IF (check_resolution) THEN
-      max_grad_temp = MAXVAL(ABS(du(2,:,:)), 1)
-      CALL parallel_vector_sum(REALMAXVAL=max_grad_temp, LENGTH=dim)
-      thickness = interface_thickness/max_grad_temp
-      resolution = (xyzlimits(2,:) - xyzlimits(1,:)) / (mxyz*2**j_mx)
-      IF (par_rank.EQ.0) THEN
-        WRITE(*, '(A35, 3ES10.2)') 'The minimum interface thickness =', thickness
-        WRITE(*, '(A35, 3ES10.2)') 'The minimum mesh step =', resolution
-        WRITE(*, '(A35, 3ES10.2)') 'Their ratio =', thickness/resolution
+      interface_mask = ABS(temp - 1).LT.fusion_delta
+      IF (COUNT(interface_mask).GT.0) THEN
+        max_grad_temp = MAXVAL(ABS(du(2,:,:)), 1, MASK=SPREAD(interface_mask, 2, dim))
+        CALL parallel_vector_sum(REALMAXVAL=max_grad_temp, LENGTH=dim)
+        thickness = interface_thickness/max_grad_temp
+        resolution = (xyzlimits(2,:) - xyzlimits(1,:)) / (mxyz*2**j_mx)
+        IF (par_rank.EQ.0) THEN
+          WRITE(*, '(A35, 3ES10.2)') 'The minimum interface thickness =', thickness
+          WRITE(*, '(A35, 3ES10.2)') 'The minimum mesh step =', resolution
+          WRITE(*, '(A35, 3ES10.2)') 'Their ratio =', thickness/resolution
+        END IF
+        IF (ANY(thickness.LT.resolution*thickness_points)) STOP '--- Insufficient resolution ---'
       END IF
-      IF (ANY(thickness.LT.resolution*thickness_points)) STOP '--- Insufficient resolution ---'
     END IF
   END SUBROUTINE user_pre_process
 
