@@ -108,6 +108,7 @@ MODULE user_case
   REAL(pr) :: tol_newton
   INTEGER  :: max_iter_newton
   INTEGER  :: thickness_points
+  INTEGER  :: j_mx_porosity
   LOGICAL  :: check_resolution
 
   ! derived quantities
@@ -575,6 +576,7 @@ CONTAINS
     call input_real('tol_newton', tol_newton, 'stop')
     call input_integer('max_iter_newton', max_iter_newton, 'stop')
     call input_integer('thickness_points', thickness_points, 'stop')
+    call input_integer('j_mx_porosity', j_mx_porosity, 'stop')
     call input_logical('check_resolution', check_resolution, 'stop')
 
     ! calculate the real quantities
@@ -803,6 +805,8 @@ CONTAINS
 
   SUBROUTINE user_post_process
     IMPLICIT NONE
+
+    IF (j_mx_porosity.LT.j_lev) CALL wlt_lowpass_filt(u, n_var_porosity, j_mx_porosity)
 
     IF (ISNAN(SUM(u))) STOP '--- NaN in user_post_process ---'
     IF (scanning_speed*t.GE.(xyzlimits(1,1) + xyzlimits(2,1))) STOP '--- Finished ---'

@@ -161,4 +161,5 @@ power_factor_2d = 0.3                       # laser power factor for the 2D prob
 tol_newton = 1e-6                           # tolerance for root finding algorithm
 max_iter_newton = 10                        # maximum number of iterations for root finding algorithm
 thickness_points = 8                        # minimum number of points inside the solid--liquid interface thickness
+j_mx_porosity = 6                           # J_MX for porosity
 check_resolution = T                        # if true, abort program in case of the unsifficient mesh resolution
