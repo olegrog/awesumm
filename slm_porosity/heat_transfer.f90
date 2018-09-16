@@ -57,7 +57,7 @@ MODULE user_case
   END INTERFACE
 
   !
-  ! Case specific variables
+  ! Case specific variables (prefer chronological order)
   !
   ! indices for variables
   INTEGER n_var_enthalpy
@@ -72,6 +72,7 @@ MODULE user_case
   REAL(pr), DIMENSION(:,:), ALLOCATABLE :: grad_h_star_prev
   REAL(pr), DIMENSION(:),   ALLOCATABLE :: enthalpy_prev, temp_prev, Dtemp_prev, psi_prev
   INTEGER,  DIMENSION(:),   ALLOCATABLE :: i_p_face
+  REAL(pr) :: volume_prev
 
   ! thermophysical properties
   TYPE(model3) :: conductivity3
@@ -107,9 +108,10 @@ MODULE user_case
   REAL(pr) :: power_factor_2d
   REAL(pr) :: tol_newton
   INTEGER  :: max_iter_newton
+  LOGICAL  :: check_resolution
   INTEGER  :: thickness_points
   INTEGER  :: j_mx_porosity
-  LOGICAL  :: check_resolution
+  REAL(pr) :: cfl_fusion_factor
 
   ! derived quantities
   REAL(pr) :: enthalpy_S             ! temp=solidus,  phi=0
@@ -175,7 +177,7 @@ CONTAINS
       PRINT *, 'n_var_exact = ', n_var_exact
       PRINT *, '*******************Variable Names*******************'
       DO i = 1, n_var
-        WRITE (*, u_variable_names_fmt) u_variable_names(i)
+        WRITE(*, u_variable_names_fmt) u_variable_names(i)
       END DO
       PRINT *, '****************************************************'
     END IF
@@ -576,9 +578,10 @@ CONTAINS
     call input_real('power_factor_2d', power_factor_2d, 'stop')
     call input_real('tol_newton', tol_newton, 'stop')
     call input_integer('max_iter_newton', max_iter_newton, 'stop')
+    call input_logical('check_resolution', check_resolution, 'stop')
     call input_integer('thickness_points', thickness_points, 'stop')
     call input_integer('j_mx_porosity', j_mx_porosity, 'stop')
-    call input_logical('check_resolution', check_resolution, 'stop')
+    call input_real('cfl_fusion_factor', cfl_fusion_factor, 'stop')
 
     ! calculate the real quantities
     enthalpy_S = enthalpy(1.0_pr - fusion_delta/2, 0.0_pr)
@@ -688,18 +691,34 @@ CONTAINS
     LOGICAL,  INTENT(INOUT) :: use_default
     REAL(pr), INTENT(IN)    :: u(nwlt,n_integrated)
     REAL(pr), INTENT(INOUT) :: cfl_out
-    REAL(pr) :: h_arr(dim,nwlt), cfl_laser, cfl_diffusive
+    REAL(pr) :: cfl_laser, cfl_diffusive, cfl_fusion
+    REAL(pr) :: h_arr(dim,nwlt), h_min(dim), dx_min
+    REAL(pr) :: volume, radius, surface_area, d2
 
     use_default = .FALSE.
     CALL get_all_local_h(h_arr)
-    cfl_laser = MAXVAL(dt/h_arr(1,:)*scanning_speed)
+    h_min = MINVAL(h_arr, DIM=2)
+    dx_min = SQRT(SUM(h_min**2))
+    volume = SUM(u(:,n_var_lfrac)*dA)
+    CALL parallel_global_sum(REAL=volume)
+
+    ! the surface area of the melting pool can be estimated if it is assumed to be a hemisphere
+    d2 = dim*0.5_pr
+    radius = (2*volume*GAMMA(1.0_pr + d2)/pi**d2)**(1.0_pr/dim)
+    surface_area = pi**d2/GAMMA(d2)*radius**(dim-1)
+
+    cfl_laser = dt/h_min(1)*scanning_speed
+    cfl_fusion = cfl_fusion_factor*ABS(volume-volume_prev)/surface_area/dx_min
     cfl_diffusive = MAXVAL(dt/SUM(h_arr**2, 1)/diffusivity_prev) / (1.0_pr - fusion_heat*Dphi_one)
     CALL parallel_global_sum(REALMAXVAL=cfl_laser)
+    CALL parallel_global_sum(REALMAXVAL=cfl_fusion)
     CALL parallel_global_sum(REALMAXVAL=cfl_diffusive)
-    cfl_out = cfl_laser
+    cfl_out = MAX(cfl_laser, cfl_fusion)
     IF (time_integration_method == TIME_INT_RK) cfl_out = MAX(cfl_out, cfl_diffusive)
+    volume_prev = volume
+
     IF (par_rank.EQ.0) THEN
-      PRINT *, 'CFL_laser =', cfl_laser, 'CFL_diffusive =', cfl_diffusive
+      WRITE(*, '(A,3(ES10.3))') 'CFL: laser, fusion, diffusive =', cfl_laser, cfl_fusion, cfl_diffusive
     END IF
     IF (u(1,1).NE.u(1,1)) STOP '--- NaN in user_cal_cfl ---'
   END SUBROUTINE user_cal_cfl
