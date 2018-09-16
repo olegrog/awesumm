@@ -638,6 +638,8 @@ CONTAINS
     u(:,n_var_lfrac) = liquid_fraction(u(:,n_var_enthalpy))
     u(:,n_var_porosity) = porosity(u(:,n_var_porosity), u(:,n_var_lfrac))
     u(:,n_var_diffus) = diffusivity(u(:,n_var_enthalpy), u(:,n_var_porosity))
+
+    IF (j_mx_porosity.LT.j_lev) CALL wlt_lowpass_filt(u, n_var_porosity, j_mx_porosity)
   END SUBROUTINE user_additional_vars
 
   !
@@ -805,8 +807,6 @@ CONTAINS
 
   SUBROUTINE user_post_process
     IMPLICIT NONE
-
-    IF (j_mx_porosity.LT.j_lev) CALL wlt_lowpass_filt(u, n_var_porosity, j_mx_porosity)
 
     IF (ISNAN(SUM(u))) STOP '--- NaN in user_post_process ---'
     IF (scanning_speed*t.GE.(xyzlimits(1,1) + xyzlimits(2,1))) STOP '--- Finished ---'
