@@ -47,10 +47,10 @@ MODULE user_case
     ! NB: fortran prohibits creating pointers to elemental functions (only to pure),
     !     but is possible to call a pure function from the elemental one
     !     and it will be considered as elemental. Fortran's magic :)
-    PURE FUNCTION func_with_derivative(x, arg, is_D)
+    PURE FUNCTION func_with_derivative(first, second, is_D)
       USE precision
       IMPLICIT NONE
-      REAL(pr), INTENT (IN) :: x, arg
+      REAL(pr), INTENT (IN) :: first, second
       INTEGER,  INTENT (IN), OPTIONAL :: is_D
       REAL(pr) :: func_with_derivative
     END FUNCTION func_with_derivative
@@ -218,7 +218,7 @@ CONTAINS
       phi = lf_from_temperature(temp)
       psi = porosity(SPREAD(initial_porosity, 1, nlocal), phi)
       k_0 = conductivity(temp, phi)
-      lambda = laser_heat_flux(x_surface, nlocal, 1.0_pr - initial_pool_radius**-2) / &
+      lambda = laser_heat_flux(psi)*laser_distribution(x_surface, nlocal, 1.0_pr - initial_pool_radius**-2) / &
         (initial_temp * k_0 * (1.0_pr - psi))
       temp = temp * EXP(-lambda*depth - (depth/initial_pool_radius)**2)
 
@@ -317,7 +317,8 @@ CONTAINS
           IF (nloc > 0) THEN
             IF (face(dim) > 0) THEN
               rhs(shift+iloc(1:nloc)) = &
-                laser_heat_flux(x(iloc(1:nloc),:), nloc) - other_heat_flux(temp_prev(iloc(1:nloc))) + &
+                laser_heat_flux(psi_prev(iloc(1:nloc)))*laser_distribution(x(iloc(1:nloc),:), nloc) - &
+                other_heat_flux(temp_prev(iloc(1:nloc))) + &
                 other_heat_flux(temp_prev(iloc(1:nloc)), 1) * Dtemp_prev(iloc(1:nloc))*enthalpy_prev(iloc(1:nloc))
             ELSE
               rhs(shift+iloc(1:nloc)) = 0
@@ -1071,22 +1072,29 @@ CONTAINS
     END IF
   END FUNCTION other_heat_flux
 
-  FUNCTION laser_heat_flux (x, nlocal, factor)
+  ELEMENTAL FUNCTION laser_heat_flux (psi)
     IMPLICIT NONE
-    REAL(pr), INTENT(IN) :: x(nlocal,dim)
-    INTEGER,  INTENT(IN) :: nlocal
-    REAL(pr), INTENT(IN), OPTIONAL :: factor
-    REAL(pr) :: laser_heat_flux(nlocal), x_center(nlocal,dim), factor_
+    REAL(pr), INTENT(IN) :: psi
+    REAL(pr) :: laser_heat_flux
 
-    x_center = TRANSPOSE(SPREAD(laser_position(t), 2, nlocal))
-    factor_ = 1.0_pr; IF (PRESENT(factor)) factor_ = factor
-    laser_heat_flux = absorptivity*laser_power/pi**(.5*(dim-1))*EXP(-SUM(factor_*(x-x_center)**2, 2))
+    laser_heat_flux = absorptivity*laser_power
     IF (dim.EQ.2) THEN
       laser_heat_flux = laser_heat_flux*power_factor_2d
     END IF
   END FUNCTION laser_heat_flux
 
-  FUNCTION laser_position (time)
+  PURE FUNCTION laser_distribution (x_, nlocal, factor)
+    INTEGER,  INTENT(IN) :: nlocal
+    REAL(pr), INTENT(IN) :: x_(nlocal,dim)
+    REAL(pr), INTENT(IN), OPTIONAL :: factor
+    REAL(pr) :: laser_distribution(nlocal), x_center(nlocal,dim), factor_
+
+    x_center = TRANSPOSE(SPREAD(laser_position(t), 2, nlocal))
+    factor_ = 1.0_pr; IF (PRESENT(factor)) factor_ = factor
+    laser_distribution = EXP(-SUM(factor_*(x_-x_center)**2, 2))/pi**(.5*(dim-1))
+  END FUNCTION laser_distribution
+
+  PURE FUNCTION laser_position (time)
     IMPLICIT NONE
     REAL(pr), INTENT(IN) :: time
     REAL(pr) :: laser_position(dim)
@@ -1096,14 +1104,14 @@ CONTAINS
     laser_position(1) = laser_position(1) + scanning_speed*time
   END FUNCTION laser_position
 
-  ELEMENTAL FUNCTION linear_interpolation (x, x1, x2, y1, y2)
+  ELEMENTAL FUNCTION linear_interpolation (x_, x1, x2, y1, y2)
     IMPLICIT NONE
-    REAL(pr), INTENT(IN) :: x, x1, x2, y1, y2
+    REAL(pr), INTENT(IN) :: x_, x1, x2, y1, y2
     REAL(pr) :: linear_interpolation
     IF (ABS(x2-x1).LE.eps_zero) THEN
       linear_interpolation = (y1 + y2)/2
     ELSE
-      linear_interpolation = (y2 - y1)/(x2 - x1)*(x - x1) + y1
+      linear_interpolation = (y2 - y1)/(x2 - x1)*(x_ - x1) + y1
     END IF
   END FUNCTION linear_interpolation
 
@@ -1139,17 +1147,17 @@ CONTAINS
   ! func_newton - global pointer to function with its derivative
   ! x0          - initial guess
   ! arg         - additional argument for func_newton
-  ELEMENTAL FUNCTION find_root (x0, arg) RESULT(x)
+  ELEMENTAL FUNCTION find_root (x0, arg) RESULT(root)
     IMPLICIT NONE
     REAL(pr), INTENT(IN) :: x0, arg
-    REAL(pr) :: x, f
+    REAL(pr) :: root, f
     INTEGER  :: i
     i = 0
-    x = x0
+    root = x0
     f = func_newton(x0, arg)
     DO WHILE(ABS(f).GT.tol_newton .AND. i.LT.max_iter_newton)
-      x = x - f/func_newton(x, arg, 1)
-      f = func_newton(x, arg)
+      root = root - f/func_newton(root, arg, 1)
+      f = func_newton(root, arg)
       i = i + 1
     END DO
   END FUNCTION find_root
