@@ -639,7 +639,7 @@ CONTAINS
     u(:,n_var_porosity) = porosity(u(:,n_var_porosity), u(:,n_var_lfrac))
     u(:,n_var_diffus) = diffusivity(u(:,n_var_enthalpy), u(:,n_var_porosity))
 
-    IF (j_mx_porosity.LT.j_lev) CALL wlt_lowpass_filt(u, n_var_porosity, j_mx_porosity)
+    IF (j_mx_porosity.LT.j_lev) CALL wlt_lowpass_filt(u(:,n_var_porosity), 1, j_mx_porosity)
   END SUBROUTINE user_additional_vars
 
   !
