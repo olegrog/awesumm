@@ -38,7 +38,7 @@ j_lev_init = 2                              # starts adapting IC by having all t
 j_IC       = 20                             # used if the IC data does not have dimensions in it then mxyz(:)*2^(j_IC-1) is used
 J_FILT     = 20
 J_MN       = 2
-J_MX       = 8
+J_MX       = 9
 
 ### Computational domain
 coord_min      = -5.0,    0.0,   -5.0       # XMIN, YMIN, ZMIN, etc
@@ -72,7 +72,7 @@ dtmin   = 1e-7                              # If dt < dtmin then exection stops(
 dtwrite = 1e-1
 t_adapt = 1e+2                              # When t > t_adapt use an adaptive time step if possible
                                             # NO time adaptation for RK and IMEX methods
-cflmax = 0.25
+cflmax = 0.5
 cflmin = 0                                  # Exit if cfl < cflmin
 
 ### Scaling variables
@@ -160,6 +160,7 @@ lfrac_scale = 10                            # scale factor for mesh adaptation
 power_factor_2d = 0.3                       # laser power factor for the 2D problem
 tol_newton = 1e-6                           # tolerance for root finding algorithm
 max_iter_newton = 10                        # maximum number of iterations for root finding algorithm
-thickness_points = 8                        # minimum number of points inside the solid--liquid interface thickness
-j_mx_porosity = 6                           # J_MX for porosity
 check_resolution = T                        # if true, abort program in case of the unsifficient mesh resolution
+thickness_points = 8                        # minimum number of points inside the solid--liquid interface thickness
+j_mx_porosity = 7                           # J_MX for porosity
+cfl_fusion_factor = 2                       # the time step will be reduced this number of times
