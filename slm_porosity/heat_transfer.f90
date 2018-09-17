@@ -810,9 +810,10 @@ CONTAINS
     ! 3. Check if J_MX provides a sufficient resolution for solid--liquid interface thickness
     IF (check_resolution) THEN
       interface_mask = ABS(temp - 1).LT.fusion_delta
-      IF (COUNT(interface_mask).GT.0) THEN
-        max_grad_temp = MAXVAL(ABS(du(2,:,:)), 1, MASK=SPREAD(interface_mask, 2, dim))
-        CALL parallel_vector_sum(REALMAXVAL=max_grad_temp, LENGTH=dim)
+      max_grad_temp = 0.0_pr
+      IF (COUNT(interface_mask).GT.0) max_grad_temp = MAXVAL(ABS(du(2,:,:)), 1, MASK=SPREAD(interface_mask, 2, dim))
+      CALL parallel_vector_sum(REALMAXVAL=max_grad_temp, LENGTH=dim)
+      IF (ANY(max_grad_temp.GT.0)) THEN
         thickness = interface_thickness/max_grad_temp
         resolution = (xyzlimits(2,:) - xyzlimits(1,:)) / (mxyz*2**j_mx)
         IF (par_rank.EQ.0) THEN
