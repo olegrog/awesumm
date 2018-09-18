@@ -14,4 +14,5 @@ for c in $cases; do
     echo "Copying $c to $dest..."
     rsync -auvz $srv:$dir/$c/results/*.{vtk,txt} $HOME/$dir/$dest/$c/
     rsync -auvz $srv:$dir/$c/*.inp $HOME/$dir/$dest/$c/
+    rsync -auvz $srv:$dir/$c/log.cfl $HOME/$dir/$dest/$c/
 done
