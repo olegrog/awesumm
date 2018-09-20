@@ -256,12 +256,12 @@ CONTAINS
         IF (ANY( face(1:dim) /= 0) .AND. ie == n_var_enthalpy) THEN
           CALL get_all_indices_by_face(face_type, jlev, nloc, iloc)
           IF (nloc > 0) THEN
-            IF (face(dim) > 0) THEN
+            IF (dim == 3 .AND. face(2) < 0) THEN
+              Lu(shift+iloc(1:nloc)) = du(ie, iloc(1:nloc), 2)
+            ELSEIF (face(dim) > 0) THEN
               Lu(shift+iloc(1:nloc)) = &
                 Neumann_bc(enthalpy_prev(iloc(1:nloc)), psi_prev(iloc(1:nloc))) * du(ie, iloc(1:nloc), dim) + &
                 Dirichlet_bc(enthalpy_prev(iloc(1:nloc))) * u_in(shift+iloc(1:nloc))
-            ELSEIF (dim == 3 .AND. face(2) < 0) THEN
-              Lu(shift+iloc(1:nloc)) = du(ie, iloc(1:nloc), 2)
             ELSE
               Lu(shift+iloc(1:nloc)) = u_in(shift+iloc(1:nloc))
             END IF
@@ -288,12 +288,12 @@ CONTAINS
         IF (ANY( face(1:dim) /= 0) .AND. ie == n_var_enthalpy) THEN
           CALL get_all_indices_by_face(face_type, jlev, nloc, iloc)
           IF (nloc > 0) THEN
-            IF (face(dim) > 0) THEN
+            IF (dim == 3 .AND. face(2) < 0) THEN
+              Lu_diag(shift+iloc(1:nloc)) = du(iloc(1:nloc), 2)
+            ELSEIF (face(dim) > 0) THEN
               Lu_diag(shift+iloc(1:nloc)) = &
                 Neumann_bc(enthalpy_prev(iloc(1:nloc)), psi_prev(iloc(1:nloc))) * du(iloc(1:nloc), dim) + &
                 Dirichlet_bc(enthalpy_prev(iloc(1:nloc)))
-            ELSEIF (dim == 3 .AND. face(2) < 0) THEN
-              Lu_diag(shift+iloc(1:nloc)) = du(iloc(1:nloc), 2)
             ELSE
               Lu_diag(shift+iloc(1:nloc)) = 1.0_pr
             END IF
@@ -317,7 +317,9 @@ CONTAINS
         IF (ANY( face(1:dim) /= 0) .AND. ie == n_var_enthalpy) THEN
           CALL get_all_indices_by_face(face_type, jlev, nloc, iloc)
           IF (nloc > 0) THEN
-            IF (face(dim) > 0) THEN
+            IF (dim == 3 .AND. face(2) < 0) THEN
+              rhs(shift+iloc(1:nloc)) = 0
+            ELSEIF (face(dim) > 0) THEN
               rhs(shift+iloc(1:nloc)) = &
                 laser_heat_flux(psi_prev(iloc(1:nloc)))*laser_distribution(x(iloc(1:nloc),:), nloc) - &
                 other_heat_flux(temp_prev(iloc(1:nloc))) + &
