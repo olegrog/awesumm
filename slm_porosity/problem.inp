@@ -164,3 +164,5 @@ check_resolution = T                        # if true, abort the program if the 
 thickness_points = 8                        # minimum number of points inside the solid--liquid interface thickness
 j_mx_porosity = 7                           # J_MX for porosity
 cfl_fusion_factor = 2                       # the time step will be reduced this number of times
+absorption_depth = 0.5
+laser_as_bc = F                             # how the laser heat flux is implemented: T  - via BC, F -  via RHS.

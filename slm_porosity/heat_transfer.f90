@@ -111,6 +111,8 @@ MODULE user_case
   INTEGER  :: thickness_points
   INTEGER  :: j_mx_porosity
   REAL(pr) :: cfl_fusion_factor
+  LOGICAL  :: laser_as_bc
+  REAL(pr) :: absorption_depth
 
   ! derived quantities
   REAL(pr) :: enthalpy_S             ! temp=solidus,  phi=0
@@ -219,8 +221,8 @@ CONTAINS
       phi = lf_from_temperature(temp)
       psi = porosity(SPREAD(powder_porosity, 1, nlocal), phi)
       k_0 = conductivity(temp, phi)
-      lambda = laser_heat_flux(psi)*laser_distribution(x_surface, nlocal, 1.0_pr - initial_pool_radius**-2) / &
-        (initial_temp * k_0 * (1.0_pr - psi))
+      lambda = laser_heat_flux(psi)*laser_distribution(x_surface, nlocal, dim-1)* &
+        EXP(1.0_pr - initial_pool_radius**-2) / (initial_temp * k_0 * (1.0_pr - psi))
       temp = temp * EXP(-lambda*depth - (depth/initial_pool_radius)**2)
 
       ! 2. Calculate the enthalpy field from the temperature one
@@ -319,10 +321,12 @@ CONTAINS
             IF (dim == 3 .AND. face(2) < 0) THEN
               rhs(shift+iloc(1:nloc)) = 0
             ELSEIF (face(dim) > 0) THEN
-              rhs(shift+iloc(1:nloc)) = &
-                laser_heat_flux(psi_prev(iloc(1:nloc)))*laser_distribution(x(iloc(1:nloc),:), nloc) - &
-                other_heat_flux(temp_prev(iloc(1:nloc))) + &
+              rhs(shift+iloc(1:nloc)) = - other_heat_flux(temp_prev(iloc(1:nloc))) + &
                 other_heat_flux(temp_prev(iloc(1:nloc)), 1) * Dtemp_prev(iloc(1:nloc))*enthalpy_prev(iloc(1:nloc))
+              IF (laser_as_bc) THEN
+                rhs(shift+iloc(1:nloc)) = rhs(shift+iloc(1:nloc)) + &
+                  laser_heat_flux(psi_prev(iloc(1:nloc)))*laser_distribution(x(iloc(1:nloc),:), nloc, dim-1)
+              END IF
             ELSE
               rhs(shift+iloc(1:nloc)) = 0
             END IF
@@ -372,6 +376,11 @@ CONTAINS
       CALL c_diff_fast(for_d2u, d2u, d2u_dummy, j_lev, ng, div_meth(meth), 10, dim, 1, dim)
       DO i = 1, dim
         user_rhs(shift+1:shift+ng) = user_rhs(shift+1:shift+ng) + d2u(i,:,i)
+        IF (.NOT.laser_as_bc) THEN
+          user_rhs(shift+1:shift+ng) = user_rhs(shift+1:shift+ng) + &
+            ! we should multiply by 2 since only a half of distribution lies in the domain
+            2*laser_heat_flux(psi)*laser_distribution(x, ng, dim)
+        END IF
       END DO
     END IF
   END FUNCTION user_rhs
@@ -636,7 +645,8 @@ CONTAINS
     call input_integer('thickness_points', thickness_points, 'stop')
     call input_integer('j_mx_porosity', j_mx_porosity, 'stop')
     call input_real('cfl_fusion_factor', cfl_fusion_factor, 'stop')
-
+    call input_logical('laser_as_bc', laser_as_bc, 'stop')
+    call input_real('absorption_depth', absorption_depth, 'stop')
     ! calculate the real quantities
     enthalpy_S = enthalpy(1.0_pr - fusion_delta/2, 0.0_pr)
     enthalpy_L = enthalpy(1.0_pr + fusion_delta/2, 1.0_pr)
@@ -1162,16 +1172,30 @@ CONTAINS
     END IF
   END FUNCTION laser_heat_flux
 
-  PURE FUNCTION laser_distribution (x_, nlocal, factor)
-    INTEGER,  INTENT(IN) :: nlocal
+  PURE FUNCTION laser_distribution (x_, nlocal, dim_)
+    INTEGER,  INTENT(IN) :: nlocal, dim_
     REAL(pr), INTENT(IN) :: x_(nlocal,dim)
-    REAL(pr), INTENT(IN), OPTIONAL :: factor
-    REAL(pr) :: laser_distribution(nlocal), x_center(nlocal,dim), factor_
+    REAL(pr) :: laser_distribution(nlocal)
+    REAL(pr) :: radius(dim_), x0(dim)
+    INTEGER  :: i
 
-    x_center = TRANSPOSE(SPREAD(laser_position(t), 2, nlocal))
-    factor_ = 1.0_pr; IF (PRESENT(factor)) factor_ = factor
-    laser_distribution = EXP(-SUM(factor_*(x_-x_center)**2, 2))/pi**(.5*(dim-1))
+    radius = 1.0_pr
+    radius(dim) = absorption_depth
+    x0 = laser_position(t)
+    laser_distribution = 1.0_pr
+    DO i = 1, dim_
+      laser_distribution = laser_distribution*gaussian(x_(:,i), x0(i), radius(i))
+    END DO
   END FUNCTION laser_distribution
+
+  ! At radius, gaussian decreases to 1/e of its peak value
+  ELEMENTAL FUNCTION gaussian (x, x0, radius)
+    IMPLICIT NONE
+    REAL(pr), INTENT(IN) :: x, x0, radius
+    REAL(pr) :: gaussian
+
+    gaussian = EXP(-((x-x0)/radius)**2)/(SQRT(pi)*radius)
+  END FUNCTION gaussian
 
   PURE FUNCTION laser_position (time)
     IMPLICIT NONE
@@ -1190,9 +1214,9 @@ CONTAINS
     REAL(pr) :: linear_interpolation
 
     IF (ABS(x2-x1).LE.eps_zero) THEN
-      linear_interpolation = (y1 + y2)/2
+      linear_interpolation = (y1+y2)/2
     ELSE
-      linear_interpolation = (y2 - y1)/(x2 - x1)*(x_ - x1) + y1
+      linear_interpolation = (y2-y1)/(x2-x1)*(x_-x1) + y1
     END IF
   END FUNCTION linear_interpolation
 
