@@ -30,6 +30,7 @@ MODULE user_case
   !   7) prefer obvious names, otherwise add comments
   !   8) prefer intermediate local variables and functions to multiline commands
   !   9) use ' instead of "
+  !   10) define local variables after the procedure/function signature
   !
 
   !
@@ -111,8 +112,12 @@ MODULE user_case
   INTEGER  :: thickness_points
   INTEGER  :: j_mx_porosity
   REAL(pr) :: cfl_fusion_factor
-  LOGICAL  :: laser_as_bc
   REAL(pr) :: absorption_depth
+
+  ! boundary conditions
+  LOGICAL  :: half_domain
+  LOGICAL  :: adiabatic_bc
+  LOGICAL  :: laser_as_bc
 
   ! derived quantities
   REAL(pr) :: enthalpy_S             ! temp=solidus,  phi=0
@@ -257,7 +262,9 @@ CONTAINS
         IF (ANY( face(1:dim) /= 0) .AND. ie == n_var_enthalpy) THEN
           CALL get_all_indices_by_face(face_type, jlev, nloc, iloc)
           IF (nloc > 0) THEN
-            IF (dim == 3 .AND. face(2) < 0) THEN
+            IF (adiabatic_bc) THEN
+              Lu(shift+iloc(1:nloc)) = du(ie, iloc(1:nloc), dim)
+            ELSEIF (dim == 3 .AND. face(2) < 0 .AND. half_domain) THEN
               Lu(shift+iloc(1:nloc)) = du(ie, iloc(1:nloc), 2)
             ELSEIF (face(dim) > 0) THEN
               Lu(shift+iloc(1:nloc)) = &
@@ -289,7 +296,9 @@ CONTAINS
         IF (ANY( face(1:dim) /= 0) .AND. ie == n_var_enthalpy) THEN
           CALL get_all_indices_by_face(face_type, jlev, nloc, iloc)
           IF (nloc > 0) THEN
-            IF (dim == 3 .AND. face(2) < 0) THEN
+            IF (adiabatic_bc) THEN
+              Lu_diag(shift+iloc(1:nloc)) = du(iloc(1:nloc), dim)
+            ELSEIF (dim == 3 .AND. face(2) < 0 .AND. half_domain) THEN
               Lu_diag(shift+iloc(1:nloc)) = du(iloc(1:nloc), 2)
             ELSEIF (face(dim) > 0) THEN
               Lu_diag(shift+iloc(1:nloc)) = &
@@ -318,7 +327,9 @@ CONTAINS
         IF (ANY( face(1:dim) /= 0) .AND. ie == n_var_enthalpy) THEN
           CALL get_all_indices_by_face(face_type, jlev, nloc, iloc)
           IF (nloc > 0) THEN
-            IF (dim == 3 .AND. face(2) < 0) THEN
+            IF (adiabatic_bc) THEN
+              rhs(shift+iloc(1:nloc)) = 0
+            ELSEIF (dim == 3 .AND. face(2) < 0 .AND. half_domain) THEN
               rhs(shift+iloc(1:nloc)) = 0
             ELSEIF (face(dim) > 0) THEN
               rhs(shift+iloc(1:nloc)) = - other_heat_flux(temp_prev(iloc(1:nloc))) + &
@@ -512,7 +523,7 @@ CONTAINS
     REAL(pr), PARAMETER :: n_columns = 3
     REAL(pr) :: max_temp, volume, width, length, depth
     REAL(pr) :: phi(nwlt), h_arr(dim,nwlt), floats(n_columns+dim)
-    REAL(pr) :: xmin, xmax, ymax, zmin, h_max
+    REAL(pr) :: xmin, xmax, ymin, ymax, zmin, h_max
     CHARACTER(LEN=200) :: filename, header, names(n_columns+dim)
 
     filename = TRIM(res_path)//'melting_pool.txt'
@@ -532,12 +543,14 @@ CONTAINS
 
       xmin = domain_bound(phi, phi_interface, 1,   -1, h_max)
       xmax = domain_bound(phi, phi_interface, 1,    1, h_max)
+      ymin = domain_bound(phi, phi_interface, 2,   -1, h_max)
       ymax = domain_bound(phi, phi_interface, 2,    1, h_max)
       zmin = domain_bound(phi, phi_interface, dim, -1, h_max)
 
       length = xmax - xmin
-      IF (dim.EQ.3) THEN
-        width = 2*ymax
+      width = ymax - ymin
+      IF (dim.EQ.3 .AND. half_domain) THEN
+        width = 2*width
         volume = 2*volume
       END IF
       depth = xyzlimits(2,dim) - zmin
@@ -564,7 +577,7 @@ CONTAINS
       CALL write_header(filename, names)
     ELSE
       total_enthalpy = SUM(u(:,n_var_enthalpy)*dA)
-      IF (dim.EQ.3) total_enthalpy = 2*total_enthalpy
+      IF (dim.EQ.3 .AND. half_domain) total_enthalpy = 2*total_enthalpy
       CALL parallel_global_sum(REAL=total_enthalpy)
       heat_flux = (total_enthalpy - total_enthalpy_prev)/dt
 
@@ -632,6 +645,11 @@ CONTAINS
     call input_real('initial_pool_radius', initial_pool_radius, 'stop')
     call input_real_vector('initial_laser_position', initial_laser_position, 3, 'stop')
 
+    ! boundary conditions
+    call input_logical('half_domain', half_domain, 'stop')
+    call input_logical('adiabatic_bc', adiabatic_bc, 'stop')
+    call input_logical('laser_as_bc', laser_as_bc, 'stop')
+
     ! numerics-specific parameters
     call input_integer('smoothing_method', smoothing_method, 'stop')
     call input_real('fusion_smoothing', fusion_smoothing, 'stop')
@@ -645,7 +663,6 @@ CONTAINS
     call input_integer('thickness_points', thickness_points, 'stop')
     call input_integer('j_mx_porosity', j_mx_porosity, 'stop')
     call input_real('cfl_fusion_factor', cfl_fusion_factor, 'stop')
-    call input_logical('laser_as_bc', laser_as_bc, 'stop')
     call input_real('absorption_depth', absorption_depth, 'stop')
     ! calculate the real quantities
     enthalpy_S = enthalpy(1.0_pr - fusion_delta/2, 0.0_pr)
@@ -679,7 +696,25 @@ CONTAINS
       PRINT fmt_real, 'conductivity(1) =', conductivity(1.0_pr, 0.5_pr)
       PRINT fmt_real, 'interface thickness =', interface_thickness
     END IF
+
+    CALL check_user_input
   END SUBROUTINE user_read_input
+
+  SUBROUTINE check_user_input
+    IMPLICIT NONE
+    LOGICAL :: laser_inside_domain
+    INTEGER :: i
+
+    laser_inside_domain = .TRUE.
+    DO i = 1, dim
+      laser_inside_domain = laser_inside_domain .AND. &
+        (initial_laser_position(i).GE.xyzlimits(1,i) .OR. initial_laser_position(i).LE.xyzlimits(2,i))
+    END DO
+    IF (.NOT.laser_inside_domain) &
+      STOP '--- The initial laser position is out of domain ---'
+    IF (dim.EQ.3 .AND. half_domain .AND. xyzlimits(1,2).NE.0.0_pr) &
+      STOP '--- half domain = true, the initial laser position does not located on the boundary ---'
+  END SUBROUTINE check_user_input
 
   !
   ! Calculate any additional variables
@@ -765,7 +800,7 @@ CONTAINS
     h_min = MINVAL(h_arr, DIM=2)
     dx_min = SQRT(SUM(h_min**2))
     volume = SUM(u(:,n_var_lfrac)*dA)
-    IF (dim.EQ.3) volume = 2*volume
+    IF (dim.EQ.3 .AND. half_domain) volume = 2*volume
     CALL parallel_global_sum(REAL=volume)
 
     ! the surface area of the melting pool can be estimated if it is assumed to be a hemisphere

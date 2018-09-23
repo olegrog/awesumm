@@ -151,6 +151,11 @@ initial_temp = 1.8
 initial_pool_radius = 1.8
 initial_laser_position = 0, 0, 0            # starting point of the center of the laser beam
 
+# boundary conditions
+half_domain = T                             # solve a problem that is symmetric with respect to y=0 only for y>0
+adiabatic_bc = F                            # if true, replace all BCs by the adiabatic ones
+laser_as_bc = F                             # how the laser heat flux is implemented: T - via BC, F - via RHS
+
 # numerics-specific parameters
 smoothing_method = 1                        # 0 - piecewise C^0, 1 - hyperbolic tangent C^\infty
 fusion_smoothing = 3                        # fusion_delta = fusion_delta*fusion_smoothing
@@ -164,5 +169,4 @@ check_resolution = T                        # if true, abort the program if the 
 thickness_points = 8                        # minimum number of points inside the solid--liquid interface thickness
 j_mx_porosity = 7                           # J_MX for porosity
 cfl_fusion_factor = 2                       # the time step will be reduced this number of times
-absorption_depth = 0.5
-laser_as_bc = F                             # how the laser heat flux is implemented: T  - via BC, F -  via RHS.
+absorption_depth = 0.5                      # depth of the laser heat absorption
