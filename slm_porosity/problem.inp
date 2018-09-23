@@ -133,23 +133,23 @@ capacity_jump = 2.025e-01
 fusion_delta = 3.663e-02                    # = liquidus - solidus
 fusion_heat = 4.061e-01                     # latent heat of fusion
 
-# bed parameters
+# setup parameters
 laser_power = 7.278e+01
 scanning_speed = 9.076e-01
-initial_porosity = 0.4
+powder_porosity = 0.4
+powder_depth = 1.0
 convective_transfer = 2.434e-05
 radiative_transfer = 3.510e-04
 absolute_temperature = 2.148e-01
 
 # macroscopic model parameters
 absorptivity = 0.3
-emissivity = 0.7
+emissivity = 0.3
 
 # initial conditions
 initial_temp = 1.8
 initial_pool_radius = 1.8
 initial_laser_position = 0, 0, 0            # starting point of the center of the laser beam
-powder_depth = 1.0
 
 # numerics-specific parameters
 smoothing_method = 1                        # 0 - piecewise C^0, 1 - hyperbolic tangent C^\infty
@@ -160,7 +160,7 @@ lfrac_scale = 10                            # scale factor for mesh adaptation
 power_factor_2d = 0.3                       # laser power factor for the 2D problem
 tol_newton = 1e-6                           # tolerance for root finding algorithm
 max_iter_newton = 10                        # maximum number of iterations for root finding algorithm
-check_resolution = T                        # if true, abort program in case of the unsifficient mesh resolution
+check_resolution = T                        # if true, abort the program if the mesh resolution is insufficient
 thickness_points = 8                        # minimum number of points inside the solid--liquid interface thickness
 j_mx_porosity = 7                           # J_MX for porosity
 cfl_fusion_factor = 2                       # the time step will be reduced this number of times

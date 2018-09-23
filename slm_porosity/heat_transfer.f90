@@ -81,10 +81,11 @@ MODULE user_case
   REAL(pr) :: fusion_delta
   REAL(pr) :: fusion_heat
 
-  ! bed parameters
+  ! setup parameters
   REAL(pr) :: laser_power
   REAL(pr) :: scanning_speed
-  REAL(pr) :: initial_porosity
+  REAL(pr) :: powder_porosity
+  REAL(pr) :: powder_depth
   REAL(pr) :: convective_transfer
   REAL(pr) :: radiative_transfer
   REAL(pr) :: absolute_temperature
@@ -97,7 +98,6 @@ MODULE user_case
   REAL(pr) :: initial_temp
   REAL(pr) :: initial_pool_radius
   REAL(pr) :: initial_laser_position(3)
-  REAL(pr) :: powder_depth
 
   ! numerics-specific parameters
   INTEGER  :: smoothing_method
@@ -218,7 +218,7 @@ CONTAINS
       depth = x_center(:,dim) - x(:,dim)
       temp = initial_temp*EXP(-SUM((x_surface-x_center)**2, 2)/initial_pool_radius**2)
       phi = lf_from_temperature(temp)
-      psi = porosity(SPREAD(initial_porosity, 1, nlocal), phi)
+      psi = porosity(SPREAD(powder_porosity, 1, nlocal), phi)
       k_0 = conductivity(temp, phi)
       lambda = laser_heat_flux(psi)*laser_distribution(x_surface, nlocal, 1.0_pr - initial_pool_radius**-2) / &
         (initial_temp * k_0 * (1.0_pr - psi))
@@ -553,10 +553,11 @@ CONTAINS
     Denthalpy_L = 1.0_pr + capacity3%Dsolid - capacity3%Dliquid + capacity3%jump
     enthalpy5 = model5(1.0_pr, capacity3%Dsolid, Denthalpy_L, capacity3%Dliquid, fusion_heat)
 
-    ! bed parameters
+    ! setup parameters
     call input_real('laser_power', laser_power, 'stop')
     call input_real('scanning_speed', scanning_speed, 'stop')
-    call input_real('initial_porosity', initial_porosity, 'stop')
+    call input_real('powder_porosity', powder_porosity, 'stop')
+    call input_real('powder_depth', powder_depth, 'stop')
     call input_real('convective_transfer', convective_transfer, 'stop')
     call input_real('radiative_transfer', radiative_transfer, 'stop')
     call input_real('absolute_temperature', absolute_temperature, 'stop')
@@ -569,7 +570,6 @@ CONTAINS
     call input_real('initial_temp', initial_temp, 'stop')
     call input_real('initial_pool_radius', initial_pool_radius, 'stop')
     call input_real_vector('initial_laser_position', initial_laser_position, 3, 'stop')
-    call input_real('powder_depth', powder_depth, 'stop')
 
     ! numerics-specific parameters
     call input_integer('smoothing_method', smoothing_method, 'stop')
@@ -636,7 +636,7 @@ CONTAINS
       ! the IC for porosity is calculated here since it is not the integrated variable
       x_center = TRANSPOSE(SPREAD(laser_position(t), 2, nwlt))
       depth = x_center(:,dim) - x(:,dim)
-      u(:,n_var_porosity) = initial_porosity/(1.0_pr + EXP(-4*(powder_depth - depth)/powder_smoothing))
+      u(:,n_var_porosity) = powder_porosity/(1.0_pr + EXP(-4*(powder_depth - depth)/powder_smoothing))
     END IF
 
     ! calculate the interpolated variables only
@@ -747,6 +747,7 @@ CONTAINS
   SUBROUTINE reallocate_scalar (var)
     IMPLICIT NONE
     REAL(pr), DIMENSION(:), ALLOCATABLE, INTENT(INOUT) :: var
+
     IF (ALLOCATED(var)) DEALLOCATE(var)
     ALLOCATE(var(nwlt))
   END SUBROUTINE reallocate_scalar
@@ -754,6 +755,7 @@ CONTAINS
   SUBROUTINE reallocate_vector (var)
     IMPLICIT NONE
     REAL(pr), DIMENSION(:,:), ALLOCATABLE, INTENT(INOUT) :: var
+
     IF (ALLOCATED(var)) DEALLOCATE(var)
     ALLOCATE(var(nwlt,dim))
   END SUBROUTINE reallocate_vector
@@ -761,12 +763,14 @@ CONTAINS
   FUNCTION grad_meth (meth)
     IMPLICIT NONE
     INTEGER :: meth, grad_meth
+
     grad_meth = meth + 2
   END FUNCTION grad_meth
 
   FUNCTION div_meth (meth)
     IMPLICIT NONE
     INTEGER :: meth, div_meth
+
     div_meth = meth + 4
   END FUNCTION div_meth
 
@@ -880,7 +884,6 @@ CONTAINS
     REAL(pr) :: lf_exponent
 
     lf_exponent = EXP(-4*Dphi_one*(enthalpy - enthalpy_one))
-
     IF (.NOT.PRESENT(is_D)) THEN
       lf_exponent = 1.0_pr/(1.0_pr + lf_exponent)
     ELSE
@@ -895,10 +898,10 @@ CONTAINS
     REAL(pr), INTENT(IN), OPTIONAL :: Dphi
     REAL(pr) :: porosity
 
-    porosity = MAX(0.0_pr, MIN(previous, initial_porosity*(1.0_pr - phi)))
+    porosity = MAX(0.0_pr, MIN(previous, powder_porosity*(1.0_pr - phi)))
     IF (PRESENT(Dphi)) THEN
       IF (porosity.LT.previous) THEN
-        porosity = -initial_porosity*Dphi
+        porosity = -powder_porosity*Dphi
       ELSE
         porosity = 0.0_pr
       END IF
@@ -921,12 +924,12 @@ CONTAINS
     Dtemp = temperature(enthalpy, temp)
     Dk_0 = conductivity(temp, phi, 1)*Dtemp + conductivity(temp, phi, 2)*Dphi
     Dc_p = capacity(temp, phi, 1)*Dtemp + capacity(temp, phi, 2)*Dphi
-    pterm = (1.0_pr - psi) / (1.0_pr - initial_porosity)
+    pterm = (1.0_pr - psi) / (1.0_pr - powder_porosity)
 
     IF (.NOT.PRESENT(Dpsi)) THEN
       diffusivity = k_0 / c_p * pterm
     ELSE
-      Dpterm = -Dpsi / (1.0_pr - initial_porosity)
+      Dpterm = -Dpsi / (1.0_pr - powder_porosity)
       diffusivity = (Dk_0*c_p - Dc_p*k_0) / c_p**2 * pterm + k_0 / c_p * Dpterm
     END IF
   END FUNCTION diffusivity
@@ -1120,6 +1123,7 @@ CONTAINS
     IMPLICIT NONE
     REAL(pr), INTENT(IN) :: time
     REAL(pr) :: laser_position(dim)
+
     ! NB: (:) cannot be removed
     laser_position(:) = initial_laser_position(:dim)
     laser_position(dim) = xyzlimits(2, dim)
@@ -1130,6 +1134,7 @@ CONTAINS
     IMPLICIT NONE
     REAL(pr), INTENT(IN) :: x_, x1, x2, y1, y2
     REAL(pr) :: linear_interpolation
+
     IF (ABS(x2-x1).LE.eps_zero) THEN
       linear_interpolation = (y1 + y2)/2
     ELSE
@@ -1174,6 +1179,7 @@ CONTAINS
     REAL(pr), INTENT(IN) :: x0, arg
     REAL(pr) :: root, f
     INTEGER  :: i
+
     i = 0
     root = x0
     f = func_newton(x0, arg)
