@@ -72,7 +72,6 @@ MODULE user_case
   REAL(pr), DIMENSION(:,:), ALLOCATABLE :: grad_h_star_prev
   REAL(pr), DIMENSION(:),   ALLOCATABLE :: enthalpy_prev, temp_prev, Dtemp_prev, psi_prev
   INTEGER,  DIMENSION(:),   ALLOCATABLE :: i_p_face
-  REAL(pr) :: volume_prev
 
   ! thermophysical properties
   TYPE(model3) :: conductivity3
@@ -467,23 +466,52 @@ CONTAINS
     IMPLICIT NONE
     REAL(pr), INTENT(IN) :: u(nwlt,n_var)
     INTEGER,  INTENT(IN) :: startup_flag, j_mn
-    REAL(pr) :: max_temp               ! maximum of temperature
-    REAL(pr) :: volume                 ! volume of the melting pool
-    REAL(pr) :: width, length, depth   ! dimensions of the melting pool
-    REAL(pr) :: phi(nwlt), h_arr(dim,nwlt), vars(dim+3)
-    REAL(pr) :: xmin, xmax, ymax, zmin, h_max
-    REAL(pr), PARAMETER :: threshold = 0.5_pr
-    CHARACTER(LEN=200) :: melting_pool, header, columns
 
-    melting_pool = TRIM(res_path)//'melting_pool.txt'
+    CALL melting_pool_stats(u, j_mn, startup_flag)
+    CALL heat_flux_stats(u, j_mn, startup_flag)
+  END SUBROUTINE user_stats
+
+  SUBROUTINE write_header (filename, names)
+    IMPLICIT NONE
+    CHARACTER(LEN=*), INTENT(IN) :: filename, names(:)
+    INTEGER :: i
+
+    IF (par_rank.EQ.0) THEN
+      OPEN(555, FILE=filename, STATUS='replace', ACTION='write')
+      WRITE(555, '(A, A11, 9A12)') '#', (TRIM(names(i)), i = 1, SIZE(names))
+      CLOSE(555)
+    END IF
+  END SUBROUTINE write_header
+
+  SUBROUTINE write_floats (filename, floats)
+    IMPLICIT NONE
+    CHARACTER(LEN=*), INTENT(IN) :: filename
+    REAL(pr) :: floats(:)
+
+    IF (par_rank.EQ.0) THEN
+      OPEN(555, FILE=filename, STATUS='old', POSITION='append', ACTION='write')
+      WRITE(555, '(10ES12.3)') floats
+      CLOSE(555)
+    END IF
+  END SUBROUTINE write_floats
+
+  SUBROUTINE melting_pool_stats (u, j_mn, startup_flag)
+    IMPLICIT NONE
+    REAL(pr), INTENT(IN) :: u(nwlt,n_var)
+    INTEGER,  INTENT(IN) :: startup_flag, j_mn
+    REAL(pr), PARAMETER :: phi_interface = 0.5_pr
+    REAL(pr), PARAMETER :: n_columns = 3
+    REAL(pr) :: max_temp, volume, width, length, depth
+    REAL(pr) :: phi(nwlt), h_arr(dim,nwlt), floats(n_columns+dim)
+    REAL(pr) :: xmin, xmax, ymax, zmin, h_max
+    CHARACTER(LEN=200) :: filename, header, names(n_columns+dim)
+
+    filename = TRIM(res_path)//'melting_pool.txt'
+
     IF (startup_flag.EQ.0) THEN
-      IF (par_rank.EQ.0) THEN
-        header = '# time      max_temp    volume      length      depth'
-        IF (dim.EQ.3) header = TRIM(header) // '       width'
-        OPEN(555, FILE=melting_pool, STATUS='replace', ACTION='write')
-        WRITE(555, *) TRIM(header)
-        CLOSE(555)
-      END IF
+      names = (/ 'time', 'max_temp', 'volume', 'length', 'depth' /)
+      IF (dim.EQ.3) names(SIZE(names)) = 'width'
+      CALL write_header(filename, names)
     ELSE
       CALL get_all_local_h(h_arr)
       h_max = MAXVAL(h_arr)
@@ -493,25 +521,49 @@ CONTAINS
       CALL parallel_global_sum(REAL=volume)
       CALL parallel_global_sum(REALMAXVAL=max_temp)
 
-      xmin = domain_bound(phi, threshold, 1,   -1, h_max)
-      xmax = domain_bound(phi, threshold, 1,    1, h_max)
-      ymax = domain_bound(phi, threshold, 2,    1, h_max)
-      zmin = domain_bound(phi, threshold, dim, -1, h_max)
+      xmin = domain_bound(phi, phi_interface, 1,   -1, h_max)
+      xmax = domain_bound(phi, phi_interface, 1,    1, h_max)
+      ymax = domain_bound(phi, phi_interface, 2,    1, h_max)
+      zmin = domain_bound(phi, phi_interface, dim, -1, h_max)
 
       length = xmax - xmin
-      width = 2*ymax
+      IF (dim.EQ.3) THEN
+        width = 2*ymax
+        volume = 2*volume
+      END IF
       depth = xyzlimits(2,dim) - zmin
 
-      IF (par_rank.EQ.0) THEN
-        columns = '(10(ES10.3, 2x))'
-        vars = (/ t, max_temp, volume, length, depth /)
-        IF (dim.EQ.3) vars(SIZE(vars)) = width
-        OPEN(555, FILE=melting_pool, STATUS='old', POSITION='append', ACTION='write')
-        WRITE(555, TRIM(columns)) vars
-        CLOSE(555)
-      END IF
+      floats = (/ t, max_temp, volume, length, depth /)
+      IF (dim.EQ.3) floats(SIZE(floats)) = width
+      CALL write_floats(filename, floats)
     END IF
-  END SUBROUTINE user_stats
+  END SUBROUTINE melting_pool_stats
+
+  SUBROUTINE heat_flux_stats (u, j_mn, startup_flag)
+    IMPLICIT NONE
+    REAL(pr), INTENT(IN) :: u(nwlt,n_var)
+    INTEGER,  INTENT(IN) :: startup_flag, j_mn
+    REAL(pr), PARAMETER :: n_columns = 3
+    REAL(pr), SAVE :: total_enthalpy_prev = 0.0_pr
+    REAL(pr) :: floats(n_columns), total_enthalpy, heat_flux
+    CHARACTER(LEN=200) :: filename, names(n_columns)
+
+    filename = TRIM(res_path)//'heat_flux.txt'
+
+    IF (startup_flag.EQ.0) THEN
+      names = (/ 'time', 'enthalpy', 'heat_flux' /)
+      CALL write_header(filename, names)
+    ELSE
+      total_enthalpy = SUM(u(:,n_var_enthalpy)*dA)
+      IF (dim.EQ.3) total_enthalpy = 2*total_enthalpy
+      CALL parallel_global_sum(REAL=total_enthalpy)
+      heat_flux = (total_enthalpy - total_enthalpy_prev)/dt
+
+      floats = (/ t, total_enthalpy, heat_flux /)
+      CALL write_floats(filename, floats)
+    END IF
+    total_enthalpy_prev = total_enthalpy
+  END SUBROUTINE heat_flux_stats
 
   !
   ! Calculate drag and lift on obstacle using penalization formula
@@ -696,12 +748,14 @@ CONTAINS
     REAL(pr) :: cfl_laser, cfl_diffusive, cfl_fusion
     REAL(pr) :: h_arr(dim,nwlt), h_min(dim), dx_min
     REAL(pr) :: volume, radius, surface_area, d2
+    REAL(pr), SAVE :: volume_prev = 0.0_pr
 
     use_default = .FALSE.
     CALL get_all_local_h(h_arr)
     h_min = MINVAL(h_arr, DIM=2)
     dx_min = SQRT(SUM(h_min**2))
     volume = SUM(u(:,n_var_lfrac)*dA)
+    IF (dim.EQ.3) volume = 2*volume
     CALL parallel_global_sum(REAL=volume)
 
     ! the surface area of the melting pool can be estimated if it is assumed to be a hemisphere
