@@ -733,7 +733,7 @@ CONTAINS
       ! the IC for porosity is calculated here since it is not the integrated variable
       x_center = TRANSPOSE(SPREAD(laser_position(t), 2, nwlt))
       depth = x_center(:,dim) - x(:,dim)
-      u(:,n_var_porosity) = powder_porosity/(1.0_pr + EXP(-4*(powder_depth - depth)/powder_smoothing))
+      u(:,n_var_porosity) = powder_porosity*sigmoid(depth, powder_depth, -1.0_pr/powder_smoothing)
     END IF
 
     ! calculate the interpolated variables only
@@ -911,7 +911,6 @@ CONTAINS
     CALL reallocate_scalar(Dtemp_prev); Dtemp_prev = temperature(h, temp)
     CALL reallocate_scalar(psi_prev); psi_prev = psi
 
-
     ! 3. Check if J_MX provides a sufficient resolution for solid--liquid interface thickness
     IF (check_resolution) THEN
       interface_mask = ABS(temp - 1).LT.fusion_delta
@@ -951,12 +950,13 @@ CONTAINS
     END IF
   END FUNCTION liquid_fraction
 
-  ELEMENTAL FUNCTION lf_from_temperature (temp)
+  ELEMENTAL FUNCTION lf_from_temperature (temp, is_D)
     IMPLICIT NONE
     REAL(pr), INTENT(IN) :: temp
+    INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: lf_from_temperature
 
-    lf_from_temperature = 1.0_pr/(1.0_pr + EXP(-4*(temp - 1.0_pr)/fusion_delta))
+    lf_from_temperature = sigmoid(temp, 1.0_pr, 1.0_pr/fusion_delta, is_D)
   END FUNCTION lf_from_temperature
 
   ELEMENTAL FUNCTION lf_piecewise (enthalpy, is_D)
@@ -982,13 +982,22 @@ CONTAINS
     INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: lf_exponent
 
-    lf_exponent = EXP(-4*Dphi_one*(enthalpy - enthalpy_one))
-    IF (.NOT.PRESENT(is_D)) THEN
-      lf_exponent = 1.0_pr/(1.0_pr + lf_exponent)
-    ELSE
-      lf_exponent = 4*Dphi_one*lf_exponent/(1.0_pr + lf_exponent)**2
-    END IF
+    lf_exponent = sigmoid(enthalpy, enthalpy_one, Dphi_one)
   END FUNCTION lf_exponent
+
+  ELEMENTAL FUNCTION sigmoid(x, x0, slope, is_D)
+    IMPLICIT NONE
+    REAL(pr), INTENT(IN) :: x0, slope
+    INTEGER,  INTENT(IN), OPTIONAL :: is_D
+    REAL(pr) :: sigmoid
+
+    sigmoid = EXP(-4*slope*(x-x0))
+    IF (.NOT.PRESENT(is_D)) THEN
+      sigmoid = 1.0_pr/(1.0_pr + sigmoid)
+    ELSE
+      sigmoid = 4*slope*sigmoid/(1.0_pr + sigmoid)**2
+    END IF
+  END FUNCTION sigmoid
 
   ! return Dporosity if the third argument is provided
   ELEMENTAL FUNCTION porosity (previous, phi, Dphi)
