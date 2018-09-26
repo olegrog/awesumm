@@ -143,7 +143,8 @@ radiative_transfer = 3.510e-04
 absolute_temperature = 2.148e-01
 
 # macroscopic model parameters
-absorptivity = 0.3
+bulk_absorptivity = 0.3
+powder_absorptivity = 0.75
 emissivity = 0.3
 
 # initial conditions

@@ -44,6 +44,10 @@ MODULE user_case
     REAL(pr) :: Dsolid, D2solid, Dliquid, D2liquid, jump
   END TYPE
 
+  TYPE state_dependent
+    REAL(pr) :: bulk, powder
+  END TYPE
+
   ABSTRACT INTERFACE
     ! NB: fortran prohibits creating pointers to elemental functions (only to pure),
     !     but is possible to call a pure function from the elemental one
@@ -75,9 +79,9 @@ MODULE user_case
   INTEGER,  DIMENSION(:),   ALLOCATABLE :: i_p_face
 
   ! thermophysical properties
-  TYPE(model3) :: conductivity3
-  TYPE(model3) :: capacity3
-  TYPE(model5) :: enthalpy5
+  TYPE(model3) :: conductivity_
+  TYPE(model3) :: capacity_
+  TYPE(model5) :: enthalpy_
   REAL(pr) :: fusion_delta
   REAL(pr) :: fusion_heat
 
@@ -91,7 +95,7 @@ MODULE user_case
   REAL(pr) :: absolute_temperature
 
   ! macroscopic model parameters
-  REAL(pr) :: absorptivity
+  TYPE(state_dependent) :: absorptivity_
   REAL(pr) :: emissivity
 
   ! initial conditions
@@ -616,16 +620,16 @@ CONTAINS
     REAL(pr) :: Denthalpy_L
 
     ! thermophysical properties
-    call input_real('Dconductivity_solid', conductivity3%Dsolid, 'stop')
-    call input_real('Dconductivity_liquid', conductivity3%Dliquid, 'stop')
-    call input_real('conductivity_jump', conductivity3%jump, 'stop')
-    call input_real('Dcapacity_solid', capacity3%Dsolid, 'stop')
-    call input_real('Dcapacity_liquid', capacity3%Dliquid, 'stop')
-    call input_real('capacity_jump', capacity3%jump, 'stop')
+    call input_real('Dconductivity_solid', conductivity_%Dsolid, 'stop')
+    call input_real('Dconductivity_liquid', conductivity_%Dliquid, 'stop')
+    call input_real('conductivity_jump', conductivity_%jump, 'stop')
+    call input_real('Dcapacity_solid', capacity_%Dsolid, 'stop')
+    call input_real('Dcapacity_liquid', capacity_%Dliquid, 'stop')
+    call input_real('capacity_jump', capacity_%jump, 'stop')
     call input_real('fusion_delta', fusion_delta, 'stop')
     call input_real('fusion_heat', fusion_heat, 'stop')
-    Denthalpy_L = 1.0_pr + capacity3%Dsolid - capacity3%Dliquid + capacity3%jump
-    enthalpy5 = model5(1.0_pr, capacity3%Dsolid, Denthalpy_L, capacity3%Dliquid, fusion_heat)
+    Denthalpy_L = 1.0_pr + capacity_%Dsolid - capacity_%Dliquid + capacity_%jump
+    enthalpy_ = model5(1.0_pr, capacity_%Dsolid, Denthalpy_L, capacity_%Dliquid, fusion_heat)
 
     ! setup parameters
     call input_real('laser_power', laser_power, 'stop')
@@ -637,7 +641,8 @@ CONTAINS
     call input_real('absolute_temperature', absolute_temperature, 'stop')
 
     ! macroscopic model parameters
-    call input_real('absorptivity', absorptivity, 'stop')
+    call input_real('bulk_absorptivity', absorptivity_%bulk, 'stop')
+    call input_real('powder_absorptivity', absorptivity_%powder, 'stop')
     call input_real('emissivity', emissivity, 'stop')
 
     ! initial conditions
@@ -987,7 +992,7 @@ CONTAINS
 
   ELEMENTAL FUNCTION sigmoid(x, x0, slope, is_D)
     IMPLICIT NONE
-    REAL(pr), INTENT(IN) :: x0, slope
+    REAL(pr), INTENT(IN) :: x, x0, slope
     INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: sigmoid
 
@@ -1048,7 +1053,7 @@ CONTAINS
     INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: conductivity
 
-    conductivity = three_parameter_model(temp, phi, conductivity3, is_D)
+    conductivity = three_parameter_model(temp, phi, conductivity_, is_D)
   END FUNCTION conductivity
 
   ELEMENTAL FUNCTION capacity (temp, phi, is_D)
@@ -1057,7 +1062,7 @@ CONTAINS
     INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: capacity
 
-    capacity = three_parameter_model(temp, phi, capacity3, is_D)
+    capacity = three_parameter_model(temp, phi, capacity_, is_D)
   END FUNCTION capacity
 
   ! if is_D present, return the partial derivative with respect to: 1 - temperature, 2 - liquid_fraction
@@ -1110,8 +1115,8 @@ CONTAINS
 
     h_star = enthalpy_star(enthalpy)
     phi = liquid_fraction(enthalpy)
-    delta = enthalpy5%Dliquid - enthalpy5%Dsolid; delta2 = enthalpy5%D2liquid - enthalpy5%D2solid
-    g1 = enthalpy5%Dsolid + delta*phi; g2 = enthalpy5%D2solid + delta2*phi; g3 = h_star + (delta + delta2/2)*phi
+    delta = enthalpy_%Dliquid - enthalpy_%Dsolid; delta2 = enthalpy_%D2liquid - enthalpy_%D2solid
+    g1 = enthalpy_%Dsolid + delta*phi; g2 = enthalpy_%D2solid + delta2*phi; g3 = h_star + (delta + delta2/2)*phi
 
     IF (.NOT.PRESENT(temp)) THEN
       IF (g2.GE.eps_zero) THEN
@@ -1138,7 +1143,7 @@ CONTAINS
     INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: enthalpy
 
-    enthalpy = five_parameter_model(temp, phi, enthalpy5, is_D)
+    enthalpy = five_parameter_model(temp, phi, enthalpy_, is_D)
   END FUNCTION enthalpy
 
   PURE FUNCTION enthalpy_equation (h, temp, is_D)
@@ -1210,11 +1215,19 @@ CONTAINS
     REAL(pr), INTENT(IN) :: psi
     REAL(pr) :: laser_heat_flux
 
-    laser_heat_flux = absorptivity*laser_power
+    laser_heat_flux = absorptivity(psi)*laser_power
     IF (dim.EQ.2) THEN
       laser_heat_flux = laser_heat_flux*power_factor_2d
     END IF
   END FUNCTION laser_heat_flux
+
+  ELEMENTAL FUNCTION absorptivity (psi)
+    IMPLICIT NONE
+    REAL(pr), INTENT(IN) :: psi
+    REAL(pr) :: absorptivity
+
+    absorptivity = (absorptivity_%powder - absorptivity_%bulk)*psi/powder_porosity + absorptivity_%bulk
+  END FUNCTION absorptivity
 
   PURE FUNCTION laser_distribution (x_, nlocal, dim_)
     INTEGER,  INTENT(IN) :: nlocal, dim_
