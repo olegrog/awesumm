@@ -141,6 +141,8 @@ powder_depth = 1.0
 convective_transfer = 2.434e-05
 radiative_transfer = 3.510e-04
 absolute_temperature = 2.148e-01
+scanning_strategy = F
+trajectory_file = 'trajectory.txt'          # file structure: x_i y_i z_i vect(x_i) vect(y_i) vect(z_i) (coordinate) (direction)
 
 # macroscopic model parameters
 bulk_absorptivity = 0.3
