@@ -228,11 +228,11 @@ CONTAINS
       x_surface(:,:) = x(:,:)
       x_surface(:,dim) = x_center(:,dim)
       depth = x_center(:,dim) - x(:,dim)
-      temp = initial_temp*EXP(-SUM((x_surface-x_center)**2, 2)/initial_pool_radius**2)
+      temp = initial_temp*EXP(-2*SUM((x_surface-x_center)**2, 2)/initial_pool_radius**2)
       phi = lf_from_temperature(temp)
       psi = porosity(SPREAD(powder_porosity, 1, nlocal), phi)
       k_0 = conductivity(temp, phi)
-      log_f = (dim-1)*LOG(pi)/2
+      log_f = (dim-1)*LOG(pi/2)/2
       distribution = laser_distribution(x_surface, nlocal, dim-1)
       distribution = EXP((LOG(distribution) + log_f)*(1.0_pr - initial_pool_radius**-2) - log_f)
       lambda = laser_heat_flux(psi) * distribution / (initial_temp * k_0 * (1.0_pr - psi))
@@ -1243,13 +1243,12 @@ CONTAINS
     END DO
   END FUNCTION laser_distribution
 
-  ! At radius, gaussian decreases to 1/e of its peak value
   ELEMENTAL FUNCTION gaussian (x, radius)
     IMPLICIT NONE
     REAL(pr), INTENT(IN) :: x, radius
     REAL(pr) :: gaussian
 
-    gaussian = EXP(-(x/radius)**2)/(SQRT(pi)*radius)
+    gaussian = EXP(-2*(x/radius)**2)/(SQRT(pi/2)*radius)
   END FUNCTION gaussian
 
   PURE FUNCTION laser_position (time)
