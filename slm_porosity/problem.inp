@@ -42,13 +42,13 @@ J_MX       = 9
 
 ### Computational domain
 coord_min      = -5.0,    0.0,   -5.0       # XMIN, YMIN, ZMIN, etc
-coord_max      =  25.0,   5.0,    0.0       # XMAX, YMAX, ZMAX, etc
+coord_max      =  15.0,   5.0,    0.0       # XMAX, YMAX, ZMAX, etc
 coord_zone_min = -5e+02, -6e+02, -7e+02     # XMINzone, etc
 coord_zone_max =  5e+02,  6e+02,  7e+02     # XMAXzone, etc
 
 ### Initial mesh
 uniform  =  0,  0,  0                       # Type: 0 - uniform, 1 - non-uniform
-M_vector = 12,  2,  2                       # Number of mesh points
+M_vector = 8,  2,  2                       # Number of mesh points
 
 ### Wavelet orders
 N_predict           = 2
@@ -154,8 +154,7 @@ initial_laser_position = 0, 0, 0            # starting point of the center of th
 
 # boundary conditions
 half_domain = T                             # solve a problem that is symmetric with respect to y=0 only for y>0
-adiabatic_bc = F                            # if true, replace all BCs by the adiabatic ones
-laser_as_bc = F                             # how the laser heat flux is implemented: T - via BC, F - via RHS
+laser_as_bc = T                             # how the laser heat flux is implemented: T - via BC, F - via RHS
 
 # numerics-specific parameters
 smoothing_method = 1                        # 0 - piecewise C^0, 1 - hyperbolic tangent C^\infty

@@ -26,11 +26,12 @@ MODULE user_case
   !   3) avoid duplicating code as much as possible
   !   4) write 'IMPLICIT NONE' in all functions and subroutines
   !   5) avoid lines more than 120 symbols
-  !   6) align column and comments
+  !   6) align columns and comments
   !   7) prefer obvious names, otherwise add comments
   !   8) prefer intermediate local variables and functions to multiline commands
   !   9) use ' instead of "
   !   10) define local variables after the procedure/function signature
+  !   11) prefer the most laconic procedure/function signature and comments
   !
 
   !
@@ -120,7 +121,6 @@ MODULE user_case
 
   ! boundary conditions
   LOGICAL  :: half_domain
-  LOGICAL  :: adiabatic_bc
   LOGICAL  :: laser_as_bc
 
   ! derived quantities
@@ -217,8 +217,10 @@ CONTAINS
     REAL(pr), INTENT(IN) :: t_local, scl(1:n_var), scl_fltwt
     INTEGER,  INTENT(INOUT) :: iter       ! iteration of call while adapting initial grid
     REAL(pr), DIMENSION(nlocal) :: depth, lambda, temp, phi, psi, k_0
+    REAL(pr) :: log_f
     REAL(pr) :: x_center(nlocal,dim)      ! coordinates of the center of the laser beam
     REAL(pr) :: x_surface(nlocal,dim)     ! coordinates of the surface of laser energy absorption
+    REAL(pr) :: distribution(nlocal)      ! the initial temperature distribution normalized per unit
 
     IF ( IC_restart_mode.EQ.0) THEN
       ! 1. Introduce the initial melting pool in terms of the temperature field
@@ -230,8 +232,10 @@ CONTAINS
       phi = lf_from_temperature(temp)
       psi = porosity(SPREAD(powder_porosity, 1, nlocal), phi)
       k_0 = conductivity(temp, phi)
-      lambda = laser_heat_flux(psi)*laser_distribution(x_surface, nlocal, dim-1)* &
-        EXP(1.0_pr - initial_pool_radius**-2) / (initial_temp * k_0 * (1.0_pr - psi))
+      log_f = (dim-1)*LOG(pi)/2
+      distribution = laser_distribution(x_surface, nlocal, dim-1)
+      distribution = EXP((LOG(distribution) + log_f)*(1.0_pr - initial_pool_radius**-2) - log_f)
+      lambda = laser_heat_flux(psi) * distribution / (initial_temp * k_0 * (1.0_pr - psi))
       temp = temp * EXP(-lambda*depth - (depth/initial_pool_radius)**2)
 
       ! 2. Calculate the enthalpy field from the temperature one
@@ -266,9 +270,7 @@ CONTAINS
         IF (ANY( face(1:dim) /= 0) .AND. ie == n_var_enthalpy) THEN
           CALL get_all_indices_by_face(face_type, jlev, nloc, iloc)
           IF (nloc > 0) THEN
-            IF (adiabatic_bc) THEN
-              Lu(shift+iloc(1:nloc)) = du(ie, iloc(1:nloc), dim)
-            ELSEIF (dim == 3 .AND. face(2) < 0 .AND. half_domain) THEN
+            IF (dim == 3 .AND. half_domain .AND. face(2) < 0) THEN
               Lu(shift+iloc(1:nloc)) = du(ie, iloc(1:nloc), 2)
             ELSEIF (face(dim) > 0) THEN
               Lu(shift+iloc(1:nloc)) = &
@@ -300,9 +302,7 @@ CONTAINS
         IF (ANY( face(1:dim) /= 0) .AND. ie == n_var_enthalpy) THEN
           CALL get_all_indices_by_face(face_type, jlev, nloc, iloc)
           IF (nloc > 0) THEN
-            IF (adiabatic_bc) THEN
-              Lu_diag(shift+iloc(1:nloc)) = du(iloc(1:nloc), dim)
-            ELSEIF (dim == 3 .AND. face(2) < 0 .AND. half_domain) THEN
+            IF (dim == 3 .AND. half_domain .AND. face(2) < 0) THEN
               Lu_diag(shift+iloc(1:nloc)) = du(iloc(1:nloc), 2)
             ELSEIF (face(dim) > 0) THEN
               Lu_diag(shift+iloc(1:nloc)) = &
@@ -331,16 +331,13 @@ CONTAINS
         IF (ANY( face(1:dim) /= 0) .AND. ie == n_var_enthalpy) THEN
           CALL get_all_indices_by_face(face_type, jlev, nloc, iloc)
           IF (nloc > 0) THEN
-            IF (adiabatic_bc) THEN
-              rhs(shift+iloc(1:nloc)) = 0
-            ELSEIF (dim == 3 .AND. face(2) < 0 .AND. half_domain) THEN
+            IF (dim == 3 .AND. half_domain .AND. face(2) < 0) THEN
               rhs(shift+iloc(1:nloc)) = 0
             ELSEIF (face(dim) > 0) THEN
-              rhs(shift+iloc(1:nloc)) = - other_heat_flux(temp_prev(iloc(1:nloc))) + &
-                other_heat_flux(temp_prev(iloc(1:nloc)), 1) * Dtemp_prev(iloc(1:nloc))*enthalpy_prev(iloc(1:nloc))
+              rhs(shift+iloc(1:nloc)) = - other_heat_flux(temp_prev(iloc(1:nloc)))
               IF (laser_as_bc) THEN
                 rhs(shift+iloc(1:nloc)) = rhs(shift+iloc(1:nloc)) + &
-                  laser_heat_flux(psi_prev(iloc(1:nloc)))*laser_distribution(x(iloc(1:nloc),:), nloc, dim-1)
+                  laser_heat_flux(psi_prev(iloc(1:nloc))) * laser_distribution(x(iloc(1:nloc),:), nloc, dim-1)
               END IF
             ELSE
               rhs(shift+iloc(1:nloc)) = 0
@@ -391,12 +388,11 @@ CONTAINS
       CALL c_diff_fast(for_d2u, d2u, d2u_dummy, j_lev, ng, div_meth(meth), 10, dim, 1, dim)
       DO i = 1, dim
         user_rhs(shift+1:shift+ng) = user_rhs(shift+1:shift+ng) + d2u(i,:,i)
-        IF (.NOT.laser_as_bc) THEN
-          user_rhs(shift+1:shift+ng) = user_rhs(shift+1:shift+ng) + &
-            ! we should multiply by 2 since only a half of distribution lies in the domain
-            2*laser_heat_flux(psi)*laser_distribution(x, ng, dim)
-        END IF
       END DO
+      IF (.NOT.laser_as_bc) THEN
+        user_rhs(shift+1:shift+ng) = user_rhs(shift+1:shift+ng) + &
+          laser_heat_flux(psi) * laser_distribution(x, ng, dim) / (1.0_pr - powder_porosity)
+      END IF
     END IF
   END FUNCTION user_rhs
 
@@ -545,11 +541,11 @@ CONTAINS
       CALL parallel_global_sum(REAL=volume)
       CALL parallel_global_sum(REALMAXVAL=max_temp)
 
-      xmin = domain_bound(phi, phi_interface, 1,   -1, h_max)
-      xmax = domain_bound(phi, phi_interface, 1,    1, h_max)
-      ymin = domain_bound(phi, phi_interface, 2,   -1, h_max)
-      ymax = domain_bound(phi, phi_interface, 2,    1, h_max)
-      zmin = domain_bound(phi, phi_interface, dim, -1, h_max)
+      xmin = subdomain_bound(phi, phi_interface, 1,   -1, h_max)
+      xmax = subdomain_bound(phi, phi_interface, 1,    1, h_max)
+      ymin = subdomain_bound(phi, phi_interface, 2,   -1, h_max)
+      ymax = subdomain_bound(phi, phi_interface, 2,    1, h_max)
+      zmin = subdomain_bound(phi, phi_interface, dim, -1, h_max)
 
       length = xmax - xmin
       width = ymax - ymin
@@ -559,6 +555,9 @@ CONTAINS
       END IF
       depth = xyzlimits(2,dim) - zmin
 
+      IF (depth.LT.0)  depth  = 0.0_pr
+      IF (length.LT.0) length = 0.0_pr
+      IF (width.LT.0)  width  = 0.0_pr
       floats = (/ t, max_temp, volume, length, depth /)
       IF (dim.EQ.3) floats(SIZE(floats)) = width
       CALL write_floats(filename, floats)
@@ -575,14 +574,14 @@ CONTAINS
     CHARACTER(LEN=200) :: filename, names(n_columns)
 
     filename = TRIM(res_path)//'heat_flux.txt'
+    total_enthalpy = SUM(u(:,n_var_enthalpy)*dA)
+    IF (dim.EQ.3 .AND. half_domain) total_enthalpy = 2*total_enthalpy
+    CALL parallel_global_sum(REAL=total_enthalpy)
 
     IF (startup_flag.EQ.0) THEN
       names = (/ 'time', 'enthalpy', 'heat_flux' /)
       CALL write_header(filename, names)
     ELSE
-      total_enthalpy = SUM(u(:,n_var_enthalpy)*dA)
-      IF (dim.EQ.3 .AND. half_domain) total_enthalpy = 2*total_enthalpy
-      CALL parallel_global_sum(REAL=total_enthalpy)
       heat_flux = (total_enthalpy - total_enthalpy_prev)/dt
 
       floats = (/ t, total_enthalpy, heat_flux /)
@@ -648,11 +647,10 @@ CONTAINS
     ! initial conditions
     call input_real('initial_temp', initial_temp, 'stop')
     call input_real('initial_pool_radius', initial_pool_radius, 'stop')
-    call input_real_vector('initial_laser_position', initial_laser_position, 3, 'stop')
+    call input_real_vector('initial_laser_position', initial_laser_position, dim, 'stop')
 
     ! boundary conditions
     call input_logical('half_domain', half_domain, 'stop')
-    call input_logical('adiabatic_bc', adiabatic_bc, 'stop')
     call input_logical('laser_as_bc', laser_as_bc, 'stop')
 
     ! numerics-specific parameters
@@ -669,6 +667,7 @@ CONTAINS
     call input_integer('j_mx_porosity', j_mx_porosity, 'stop')
     call input_real('cfl_fusion_factor', cfl_fusion_factor, 'stop')
     call input_real('absorption_depth', absorption_depth, 'stop')
+
     ! calculate the real quantities
     enthalpy_S = enthalpy(1.0_pr - fusion_delta/2, 0.0_pr)
     enthalpy_L = enthalpy(1.0_pr + fusion_delta/2, 1.0_pr)
@@ -718,7 +717,7 @@ CONTAINS
     IF (.NOT.laser_inside_domain) &
       STOP '--- The initial laser position is out of domain ---'
     IF (dim.EQ.3 .AND. half_domain .AND. xyzlimits(1,2).NE.0.0_pr) &
-      STOP '--- half domain = true, the initial laser position does not located on the boundary ---'
+      STOP '--- y_min != 0 while half_domain == T ---'
   END SUBROUTINE check_user_input
 
   !
@@ -738,7 +737,7 @@ CONTAINS
       ! the IC for porosity is calculated here since it is not the integrated variable
       x_center = TRANSPOSE(SPREAD(laser_position(t), 2, nwlt))
       depth = x_center(:,dim) - x(:,dim)
-      u(:,n_var_porosity) = powder_porosity*sigmoid(depth, powder_depth, -1.0_pr/powder_smoothing)
+      u(:,n_var_porosity) = powder_porosity*sigmoid(powder_depth - depth, 1.0_pr/powder_smoothing)
     END IF
 
     ! calculate the interpolated variables only
@@ -961,7 +960,7 @@ CONTAINS
     INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: lf_from_temperature
 
-    lf_from_temperature = sigmoid(temp, 1.0_pr, 1.0_pr/fusion_delta, is_D)
+    lf_from_temperature = sigmoid(temp - 1.0_pr, 1.0_pr/fusion_delta, is_D)
   END FUNCTION lf_from_temperature
 
   ELEMENTAL FUNCTION lf_piecewise (enthalpy, is_D)
@@ -987,16 +986,16 @@ CONTAINS
     INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: lf_exponent
 
-    lf_exponent = sigmoid(enthalpy, enthalpy_one, Dphi_one)
+    lf_exponent = sigmoid(enthalpy - enthalpy_one, Dphi_one, is_D)
   END FUNCTION lf_exponent
 
-  ELEMENTAL FUNCTION sigmoid(x, x0, slope, is_D)
+  ELEMENTAL FUNCTION sigmoid(x, slope, is_D)
     IMPLICIT NONE
-    REAL(pr), INTENT(IN) :: x, x0, slope
+    REAL(pr), INTENT(IN) :: x, slope
     INTEGER,  INTENT(IN), OPTIONAL :: is_D
     REAL(pr) :: sigmoid
 
-    sigmoid = EXP(-4*slope*(x-x0))
+    sigmoid = EXP(-4*slope*x)
     IF (.NOT.PRESENT(is_D)) THEN
       sigmoid = 1.0_pr/(1.0_pr + sigmoid)
     ELSE
@@ -1177,12 +1176,10 @@ CONTAINS
   ELEMENTAL FUNCTION Neumann_bc (enthalpy, psi)
     IMPLICIT NONE
     REAL(pr), INTENT(IN) :: enthalpy, psi
-    REAL(pr) :: Neumann_bc, temp, phi, Dh_star
+    REAL(pr) :: Neumann_bc, Dh_star
 
-    temp = temperature(enthalpy)
-    phi = liquid_fraction(enthalpy)
     Dh_star = enthalpy_star(enthalpy, 1)
-    Neumann_bc = (1.0_pr - psi) * conductivity(temp, phi) / capacity(temp, phi) * Dh_star
+    Neumann_bc = (1.0_pr - powder_porosity) * diffusivity(enthalpy, psi) * Dh_star
   END FUNCTION Neumann_bc
 
   ELEMENTAL FUNCTION Dirichlet_bc (enthalpy)
@@ -1229,29 +1226,30 @@ CONTAINS
     absorptivity = (absorptivity_%powder - absorptivity_%bulk)*psi/powder_porosity + absorptivity_%bulk
   END FUNCTION absorptivity
 
-  PURE FUNCTION laser_distribution (x_, nlocal, dim_)
-    INTEGER,  INTENT(IN) :: nlocal, dim_
-    REAL(pr), INTENT(IN) :: x_(nlocal,dim)
+  PURE FUNCTION laser_distribution (coords, nlocal, dimensionality)
+    REAL(pr), INTENT(IN) :: coords(nlocal,dim)
+    INTEGER,  INTENT(IN) :: nlocal, dimensionality
     REAL(pr) :: laser_distribution(nlocal)
-    REAL(pr) :: radius(dim_), x0(dim)
+    REAL(pr) :: radius(dim), x0(dim)
     INTEGER  :: i
 
     radius = 1.0_pr
     radius(dim) = absorption_depth
     x0 = laser_position(t)
     laser_distribution = 1.0_pr
-    DO i = 1, dim_
-      laser_distribution = laser_distribution*gaussian(x_(:,i), x0(i), radius(i))
+    IF (dimensionality == dim .AND. x0(dim) == xyzlimits(2, dim)) laser_distribution = 2.0_pr
+    DO i = 1, dimensionality
+      laser_distribution = laser_distribution*gaussian(coords(:,i) - x0(i), radius(i))
     END DO
   END FUNCTION laser_distribution
 
   ! At radius, gaussian decreases to 1/e of its peak value
-  ELEMENTAL FUNCTION gaussian (x, x0, radius)
+  ELEMENTAL FUNCTION gaussian (x, radius)
     IMPLICIT NONE
-    REAL(pr), INTENT(IN) :: x, x0, radius
+    REAL(pr), INTENT(IN) :: x, radius
     REAL(pr) :: gaussian
 
-    gaussian = EXP(-((x-x0)/radius)**2)/(SQRT(pi)*radius)
+    gaussian = EXP(-(x/radius)**2)/(SQRT(pi)*radius)
   END FUNCTION gaussian
 
   PURE FUNCTION laser_position (time)
@@ -1277,11 +1275,11 @@ CONTAINS
     END IF
   END FUNCTION linear_interpolation
 
-  FUNCTION domain_bound (field, threshold, axis, sgn, min_distance)
+  FUNCTION subdomain_bound (field, threshold, axis, sgn, min_distance)
     IMPLICIT NONE
     REAL(pr), INTENT(IN) :: field(nwlt), threshold, min_distance
     INTEGER,  INTENT(IN) :: axis, sgn
-    REAL(pr) :: domain_bound, x1, x2
+    REAL(pr) :: subdomain_bound, x1, x2
     INTEGER x1_loc(1), x2_loc(1), i
     LOGICAL, DIMENSION(nwlt) :: domain, mask
 
@@ -1294,11 +1292,11 @@ CONTAINS
     END DO
     x2 = MINVAL(sgn*x(:,axis), MASK=mask)
     x2_loc = MINLOC(sgn*x(:,axis), MASK=mask)
-    domain_bound = linear_interpolation(threshold, field(x1_loc(1)), field(x2_loc(1)), x1, x2)
-    IF (COUNT(mask).EQ.0 .OR. ABS(x2-x1).GT.min_distance) domain_bound = -HUGE(REAL(pr))
-    CALL parallel_global_sum(REALMAXVAL=domain_bound)
-    domain_bound = sgn*domain_bound
-  END FUNCTION domain_bound
+    subdomain_bound = linear_interpolation(threshold, field(x1_loc(1)), field(x2_loc(1)), x1, x2)
+    IF (COUNT(mask).EQ.0 .OR. ABS(x2-x1).GT.min_distance) subdomain_bound = -HUGE(REAL(pr))
+    CALL parallel_global_sum(REALMAXVAL=subdomain_bound)
+    subdomain_bound = sgn*subdomain_bound
+  END FUNCTION subdomain_bound
 
   !
   ! Find root of equation using the Newton algorithm
