@@ -1223,7 +1223,10 @@ CONTAINS
     REAL(pr), INTENT(IN) :: psi
     REAL(pr) :: absorptivity
 
-    absorptivity = (absorptivity_%powder - absorptivity_%bulk)*psi/powder_porosity + absorptivity_%bulk
+    absorptivity = absorptivity_%bulk
+    IF (powder_porosity.GT.0.0_pr) THEN
+      absorptivity = absorptivity + (absorptivity_%powder - absorptivity_%bulk)*psi/powder_porosity
+    END IF
   END FUNCTION absorptivity
 
   PURE FUNCTION laser_distribution (coords, nlocal, dimensionality)
