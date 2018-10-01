@@ -146,6 +146,7 @@ absolute_temperature = 2.148e-01
 bulk_absorptivity = 0.3
 powder_absorptivity = 0.75
 emissivity = 0.3
+laser_depth = 0.5                           # semiaxis of the spheroid laser heat source
 
 # initial conditions
 initial_temp = 1.8
@@ -169,4 +170,3 @@ check_resolution = T                        # if true, abort the program if the 
 thickness_points = 8                        # minimum number of points inside the solid--liquid interface thickness
 j_mx_porosity = 7                           # J_MX for porosity
 cfl_fusion_factor = 2                       # the time step will be reduced this number of times
-absorption_depth = 0.5                      # depth of the laser heat absorption

@@ -98,6 +98,7 @@ MODULE user_case
   ! macroscopic model parameters
   TYPE(state_dependent) :: absorptivity_
   REAL(pr) :: emissivity
+  REAL(pr) :: laser_depth
 
   ! initial conditions
   REAL(pr) :: initial_temp
@@ -117,7 +118,6 @@ MODULE user_case
   INTEGER  :: thickness_points
   INTEGER  :: j_mx_porosity
   REAL(pr) :: cfl_fusion_factor
-  REAL(pr) :: absorption_depth
 
   ! boundary conditions
   LOGICAL  :: half_domain
@@ -643,6 +643,7 @@ CONTAINS
     call input_real('bulk_absorptivity', absorptivity_%bulk, 'stop')
     call input_real('powder_absorptivity', absorptivity_%powder, 'stop')
     call input_real('emissivity', emissivity, 'stop')
+    call input_real('laser_depth', laser_depth, 'stop')
 
     ! initial conditions
     call input_real('initial_temp', initial_temp, 'stop')
@@ -666,7 +667,6 @@ CONTAINS
     call input_integer('thickness_points', thickness_points, 'stop')
     call input_integer('j_mx_porosity', j_mx_porosity, 'stop')
     call input_real('cfl_fusion_factor', cfl_fusion_factor, 'stop')
-    call input_real('absorption_depth', absorption_depth, 'stop')
 
     ! calculate the real quantities
     enthalpy_S = enthalpy(1.0_pr - fusion_delta/2, 0.0_pr)
@@ -1234,7 +1234,7 @@ CONTAINS
     INTEGER  :: i
 
     radius = 1.0_pr
-    radius(dim) = absorption_depth
+    radius(dim) = laser_depth
     x0 = laser_position(t)
     laser_distribution = 1.0_pr
     IF (dimensionality == dim .AND. x0(dim) == xyzlimits(2, dim)) laser_distribution = 2.0_pr
