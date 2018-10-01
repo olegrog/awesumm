@@ -550,7 +550,7 @@ CONTAINS
       length = xmax - xmin
       width = ymax - ymin
       IF (dim.EQ.3 .AND. half_domain) THEN
-        width = 2*width
+        width = 2*ymax
         volume = 2*volume
       END IF
       depth = xyzlimits(2,dim) - zmin
