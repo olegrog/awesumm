@@ -49,6 +49,11 @@ MODULE user_case
     REAL(pr) :: bulk, powder
   END TYPE
 
+  TYPE trajectory_data
+    REAL(pr) :: length, length_sum
+    REAL(pr), DIMENSION(3) :: position_1, position_2
+  END TYPE
+
   ABSTRACT INTERFACE
     ! NB: fortran prohibits creating pointers to elemental functions (only to pure),
     !     but is possible to call a pure function from the elemental one
@@ -94,6 +99,8 @@ MODULE user_case
   REAL(pr) :: convective_transfer
   REAL(pr) :: radiative_transfer
   REAL(pr) :: absolute_temperature
+  LOGICAL  :: single_track
+  TYPE(trajectory_data), DIMENSION(:), ALLOCATABLE :: trajectory
 
   ! macroscopic model parameters
   TYPE(state_dependent) :: absorptivity_
@@ -617,6 +624,7 @@ CONTAINS
     CHARACTER(LEN=*), PARAMETER :: fmt_real = '(A30,F10.7)'
     CHARACTER(LEN=*), PARAMETER :: stars = REPEAT('*', 20)
     REAL(pr) :: Denthalpy_L
+    CHARACTER(LEN=200) :: trajectory_file
 
     ! thermophysical properties
     call input_real('Dconductivity_solid', conductivity_%Dsolid, 'stop')
@@ -638,6 +646,9 @@ CONTAINS
     call input_real('convective_transfer', convective_transfer, 'stop')
     call input_real('radiative_transfer', radiative_transfer, 'stop')
     call input_real('absolute_temperature', absolute_temperature, 'stop')
+    call input_logical('single_track', single_track, 'stop')
+    call input_string('trajectory_file', trajectory_file, 'stop')
+    call read_laser_trajectory(trajectory_file)
 
     ! macroscopic model parameters
     call input_real('bulk_absorptivity', absorptivity_%bulk, 'stop')
@@ -703,6 +714,42 @@ CONTAINS
 
     CALL check_user_input
   END SUBROUTINE user_read_input
+
+  SUBROUTINE read_laser_trajectory (trajectory_file_)
+    IMPLICIT NONE
+    CHARACTER(LEN=*), INTENT(IN) :: trajectory_file_
+    INTEGER  :: stat, length
+    INTEGER  :: line
+    REAL(pr), DIMENSION(6) :: buf
+
+    line = 0
+    OPEN(042, FILE=trajectory_file_, ACTION='read')
+    DO
+      READ(042, *, IOSTAT = stat) buf
+      IF (stat.NE.0) EXIT
+      line = line + 1
+    END DO
+    ALLOCATE(trajectory(line))
+    CLOSE(042)
+    line = 0
+    OPEN(042, FILE=trajectory_file_, ACTION='read')
+    DO
+      READ(042, *, iostat=stat) buf
+      IF (stat.NE.0) EXIT
+      line = line + 1
+      trajectory(line)%position_1 = buf(1:3)
+      trajectory(line)%position_2 = buf(4:6)
+      trajectory(line)%length = SQRT(SUM((trajectory(line)%position_2 - trajectory(line)%position_1)**2))
+      trajectory(line)%length_sum = trajectory(line)%length + trajectory(line-1)%length_sum
+    END DO
+    CLOSE(042)
+    DO line = 1, SIZE(trajectory)
+      PRINT *, 'line', line
+      PRINT *, 'Start point', trajectory(line)%position_1
+      PRINT *, 'End point',trajectory(line)%position_2
+      PRINT *, 'Length', trajectory(line)%length, 'Total length', trajectory(line)%length_sum
+    END DO
+  END SUBROUTINE read_laser_trajectory
 
   SUBROUTINE check_user_input
     IMPLICIT NONE
@@ -938,7 +985,8 @@ CONTAINS
     IMPLICIT NONE
 
     IF (ISNAN(SUM(u))) STOP '--- NaN in user_post_process ---'
-    IF (scanning_speed*t.GE.(xyzlimits(1,1) + xyzlimits(2,1))) STOP '--- Finished ---'
+    IF (scanning_speed*t.GE.(xyzlimits(1,1) + xyzlimits(2,1)) &
+      .OR.(scanning_speed*t.GT.trajectory(SIZE(trajectory))%length_sum)) STOP '--- Finished ---'
   END SUBROUTINE user_post_process
 
   ELEMENTAL FUNCTION liquid_fraction (enthalpy, is_D)
@@ -1258,11 +1306,21 @@ CONTAINS
     IMPLICIT NONE
     REAL(pr), INTENT(IN) :: time
     REAL(pr) :: laser_position(dim)
+    INTEGER  :: n                                         ! track_number
+    REAL(pr) :: normalized_direction(3)
+    REAL(pr) :: movement_time, local_time
 
     ! NB: (:) cannot be removed
-    laser_position(:) = initial_laser_position(:dim)
-    laser_position(dim) = xyzlimits(2, dim)
-    laser_position(1) = laser_position(1) + scanning_speed*time
+    IF (single_track) THEN
+      laser_position(:) = initial_laser_position(:dim)
+      laser_position(dim) = xyzlimits(2, dim)
+      laser_position(1) = laser_position(1) + scanning_speed*time
+    ELSE
+      n = find_index(trajectory(:)%length_sum,time*scanning_speed)
+      normalized_direction = (trajectory(n)%position_2 - trajectory(n)%position_1)*scanning_speed/trajectory(n)%length
+      local_time = trajectory(n-1)%length_sum/scanning_speed
+      laser_position = trajectory(n)%position_1 + normalized_direction*(time - local_time)
+    END IF
   END FUNCTION laser_position
 
   ELEMENTAL FUNCTION linear_interpolation (x_, x1, x2, y1, y2)
@@ -1325,4 +1383,14 @@ CONTAINS
     END DO
   END FUNCTION find_root
 
+  PURE FUNCTION find_index(array, value)
+    IMPLICIT NONE
+    REAL(pr), DIMENSION(:), INTENT(IN) :: array
+    REAL(pr), INTENT(IN) :: value
+    INTEGER :: find_index
+
+    DO find_index = 1,SIZE(array)
+      IF (array(find_index).GT.value) EXIT
+    END DO
+  END FUNCTION find_index
 END MODULE user_case

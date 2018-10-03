@@ -141,6 +141,8 @@ powder_depth = 1.0
 convective_transfer = 2.434e-05
 radiative_transfer = 3.510e-04
 absolute_temperature = 2.148e-01
+single_track = T
+trajectory_file = 'trajectory.txt'          # line format: x1 y1 z1 x2 y2 z2
 
 # macroscopic model parameters
 bulk_absorptivity = 0.3
